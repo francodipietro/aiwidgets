@@ -1,0 +1,7 @@
+{
+  "uuid": "aiwidgets@fdipietro.dev",
+  "name": "AI Widgets Desktop",
+  "description": "Pinned desktop usage widgets fed by the local AI Widgets application.",
+  "shell-version": ["46"],
+  "url": "https://aiwidgets.local"
+}

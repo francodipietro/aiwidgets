@@ -1,0 +1,30 @@
+{
+  "settings": { "refreshMinutes": 1, "enabledProviders": ["claude", "codex"] },
+  "updatedAt": "2026-09-07T20:02:00-03:00",
+  "providers": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "accent": "#f2ae93",
+      "session": { "available": 72, "resetsAt": "2026-09-08T18:00:00-03:00" },
+      "weekly": { "available": 83, "resetsAt": "2026-09-11T18:00:00-03:00" },
+      "note": "Enter values from claude.ai or Claude Code."
+    },
+    {
+      "id": "codex",
+      "name": "Codex",
+      "accent": "#b9d6ff",
+      "session": { "available": 61, "resetsAt": "2026-09-07T07:58:00-03:00" },
+      "weekly": { "available": 39, "resetsAt": "2026-09-09T07:58:00-03:00" },
+      "note": "Updated from the Codex usage panel."
+    },
+    {
+      "id": "copilot",
+      "name": "GitHub Copilot",
+      "accent": "#e7eaf0",
+      "monthly": { "available": 91, "resetLabel": "Resets Sep 30 at 9:00 PM", "label": "Premium requests" },
+      "actionsMinutes": { "available": 35, "used": 1306.7, "included": 2000, "billedAmount": 0, "resetLabel": "Included usage limits reset in 23 days." },
+      "note": "Updated from GitHub Copilot billing."
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+.aiwidgets-desktop-root {
+  spacing: 20px;
+}
+.aiwidgets-desktop-card {
+  min-height: 170px;
+  padding: 11px;
+  spacing: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,.17);
+  background-color: rgba(18,37,62,.92);
+  box-shadow: 0 14px 34px rgba(0,0,0,.34);
+}
+.aiwidgets-desktop-card.claude {
+  background-color: rgba(47,31,28,.92);
+}
+.aiwidgets-desktop-card.copilot {
+  background-color: rgba(43,46,53,.94);
+}
+.aiwidgets-desktop-header,
+.aiwidgets-panel-header {
+  spacing: 6px;
+}
+.aiwidgets-desktop-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #f8f7f6;
+}
+.aiwidgets-desktop-logo,
+.aiwidgets-panel-logo {
+  font-size: 22px;
+  color: #c9ddff;
+}
+.aiwidgets-desktop-logo.claude,
+.aiwidgets-panel-logo.claude {
+  color: #f2ae93;
+}
+.aiwidgets-quota {
+  margin-top: 3px;
+  spacing: 2px;
+}
+.aiwidgets-quota-label {
+  font-size: 10px;
+  color: #aeb8c8;
+}
+.aiwidgets-quota-summary {
+  spacing: 5px;
+  y_align: center;
+}
+.aiwidgets-quota-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: #ffffff;
+}
+.aiwidgets-quota-consumed {
+  font-size: 10px;
+  color: #d6dce8;
+  y_align: end;
+}
+.aiwidgets-quota-bar {
+  height: 5px;
+  margin-top: 1px;
+  border-radius: 5px;
+  background-color: rgba(226,229,240,.18);
+}
+.aiwidgets-quota-fill {
+  height: 5px;
+  border-radius: 5px;
+  background-color: #c9ddff;
+}
+.aiwidgets-desktop-card.claude .aiwidgets-quota-fill,
+.aiwidgets-panel-card.claude .aiwidgets-quota-fill {
+  background-color: #f2ae93;
+}
+.aiwidgets-desktop-card.copilot .aiwidgets-quota-fill,
+.aiwidgets-panel-card.copilot .aiwidgets-quota-fill {
+  background-color: #b8c0cc;
+}
+.aiwidgets-quota-available,
+.aiwidgets-quota-empty {
+  font-size: 9px;
+  color: #aeb8c8;
+}
+.aiwidgets-quota-reset {
+  font-size: 9px;
+  color: #d6dce8;
+}
+.aiwidgets-desktop-note {
+  font-size: 9px;
+  color: #b8c0cf;
+}
+.aiwidgets-panel-card {
+  min-width: 270px;
+  margin: 5px 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background-color: rgba(18, 37, 62, .96);
+}
+.aiwidgets-panel-indicator {
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #b9d6ff;
+}
+.aiwidgets-panel-card.claude {
+  background-color: rgba(58, 38, 32, .96);
+}
+.aiwidgets-panel-card.copilot {
+  background-color: rgba(43, 46, 53, .97);
+}
+.aiwidgets-panel-card-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+}
+.aiwidgets-panel-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+}
+.aiwidgets-panel-card-usage {
+  margin-top: 5px;
+  font-size: 13px;
+  color: #d6dce8;
+}

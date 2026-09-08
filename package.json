@@ -1,0 +1,43 @@
+{
+  "name": "aiwidgets",
+  "version": "0.4.16",
+  "description": "Local subscription-usage widgets for Claude, Codex, and GitHub Copilot",
+  "private": true,
+  "author": "AI Widgets",
+  "desktopName": "aiwidgets",
+  "main": "src/main.js",
+  "type": "module",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
+    "package:linux": "electron-builder --linux AppImage && node scripts/package-deb.mjs",
+    "package:gnome": "cd gnome-extension/aiwidgets@fdipietro.dev && rm -f ../../dist/aiwidgets-gnome-shell.zip && zip -j ../../dist/aiwidgets-gnome-shell.zip metadata.json extension.js stylesheet.css ../../imgs/logo_chatgpt.svg ../../imgs/logo_claude.svg ../../imgs/logo_copilot.png",
+    "package:mac": "electron-builder --mac dmg zip"
+  },
+  "build": {
+    "appId": "dev.aiwidgets.desktop",
+    "productName": "AI Widgets",
+    "files": [
+      "src/**/*",
+      "imgs/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "icon": "imgs/logo_app.svg",
+      "category": "Utility",
+      "maintainer": "AI Widgets",
+      "syncDesktopName": true,
+      "synopsis": "Local subscription-usage widgets for AI services",
+      "target": ["AppImage", "deb"]
+    },
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": ["dmg", "zip"]
+    }
+  },
+  "devDependencies": {
+    "electron": "^39.0.0",
+    "electron-builder": "^26.0.0"
+  }
+}

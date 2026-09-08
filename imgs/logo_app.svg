@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="AI Widgets">
+  <defs>
+    <linearGradient id="background" x1="24" y1="20" x2="232" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#182c4c"/>
+      <stop offset="1" stop-color="#0c1629"/>
+    </linearGradient>
+    <linearGradient id="letters" x1="78" y1="72" x2="181" y2="183" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#d8f3ff"/>
+      <stop offset="1" stop-color="#73c9ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#background)"/>
+  <rect x="12" y="12" width="232" height="232" rx="47" fill="none" stroke="#78cfff" stroke-opacity=".38" stroke-width="4"/>
+  <path d="M59 182 96 73h23l37 109h-22l-8-27H88l-8 27H59Zm35-46h26l-13-43-13 43Z" fill="url(#letters)"/>
+  <path d="M169 73h22v109h-22z" fill="url(#letters)"/>
+  <circle cx="180" cy="54" r="8" fill="#8fd8ff"/>
+</svg>

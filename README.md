@@ -71,6 +71,24 @@ node scripts/aiwidgets-usage.mjs codex --session 61 --weekly 39 --reset "2026-09
 
 The helper only writes local JSON. It does not authenticate with or call any provider.
 
+## Terminal usage CLI
+
+The usage CLI prints the already synchronized values for enabled providers. It
+only reads the local data file: it does not open a browser, sign in, or contact
+any provider.
+
+```bash
+# From a development checkout
+npm run usage
+
+# From an installed package
+aiwidgets usage
+
+# Machine-readable output, including disabled providers
+npm run --silent usage -- --json --all
+aiwidgets usage --json --all
+```
+
 ## Validation and packaging
 
 ```bash

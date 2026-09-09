@@ -5,6 +5,7 @@ import { access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { runUsageCli } from './usage-cli.mjs';
 
 const { app, BrowserWindow, ipcMain, screen } = electron;
 const execFileAsync = promisify(execFile);
@@ -50,15 +51,18 @@ let quitting = false;
 const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
+const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
 
-if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', (_event, commandLine) => {
-  if (commandLine.includes('--quit')) {
-    requestQuit();
-    return;
-  }
-  showControlCenter();
-});
+if (!usageCliRequested) {
+  if (!app.requestSingleInstanceLock()) app.quit();
+  app.on('second-instance', (_event, commandLine) => {
+    if (commandLine.includes('--quit')) {
+      requestQuit();
+      return;
+    }
+    showControlCenter();
+  });
+}
 
 function dataPath() { return path.join(app.getPath('userData'), DATA_FILE); }
 function collectorPath() { return path.join(app.getPath('userData'), COLLECTOR_FILE); }
@@ -643,6 +647,11 @@ function showControlCenter() {
 }
 
 app.whenReady().then(async () => {
+  if (usageCliRequested) {
+    const code = await runUsageCli(process.argv.slice(2), { dataPath: dataPath() });
+    app.exit(code);
+    return;
+  }
   if (quitRequested) {
     await requestQuit();
     return;

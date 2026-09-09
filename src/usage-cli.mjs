@@ -142,7 +142,7 @@ function providerLines(provider, palette) {
 }
 
 export function usageHelp() {
-  return `Usage: aiwidgets usage [--json] [--all] [--refresh] [--no-refresh]\n\nShows enabled usage. A snapshot less than one minute old is reused; older data is refreshed through the running AI Widgets collector or a short-lived hidden collector when the background app is stopped.\n\nOptions:\n  --json        Print machine-readable JSON.\n  --all         Include disabled providers.\n  --refresh     Force an update even when the snapshot is fresh.\n  --no-refresh  Read the saved snapshot without requesting an update.\n  --help        Show this help.\n\nAI Widgets uses the running background collector when available, or starts a short-lived hidden collector to refresh Claude and Codex when it is stopped.`;
+  return `Usage: aiwidgets usage [--json] [--all] [--refresh] [--no-refresh]\n\nShows enabled usage. A snapshot less than one minute old is reused; older data is refreshed through the running AI Widgets collector or a short-lived hidden collector when the background app is stopped.\n\nOptions:\n  --json        Print machine-readable JSON.\n  --all         Include disabled providers.\n  --refresh     Force an update even when the snapshot is fresh.\n  --no-refresh  Read the saved snapshot without requesting an update.\n  --help        Show this help.\n\nAI Widgets uses the running background collector when available, or starts a short-lived hidden collector to refresh all enabled providers when it is stopped.`;
 }
 
 export async function runUsageCli(args = process.argv.slice(2), options = {}) {

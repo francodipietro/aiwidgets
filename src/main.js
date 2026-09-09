@@ -15,7 +15,6 @@ const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
 const HEARTBEAT_FILE = 'collector-heartbeat.json';
-const COLLECTOR_HEARTBEAT_MS = 15_000;
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -130,18 +129,11 @@ async function setRuntimeHeartbeat() {
   await writeJson(heartbeatPath(), { updatedAt: new Date().toISOString() });
 }
 
-function heartbeatIsFresh(heartbeat) {
-  const updatedAt = Date.parse(heartbeat?.updatedAt || '');
-  return Number.isFinite(updatedAt) && Date.now() - updatedAt >= 0 && Date.now() - updatedAt < COLLECTOR_HEARTBEAT_MS;
-}
 
-async function backgroundCollectorIsActive() {
+async function backgroundCollectorMayOwnSession() {
   try {
-    const [runtime, heartbeat] = await Promise.all([
-      readFile(runtimePath(), 'utf8').then(JSON.parse),
-      readFile(heartbeatPath(), 'utf8').then(JSON.parse),
-    ]);
-    return runtime?.active === true && heartbeatIsFresh(heartbeat);
+    const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));
+    return runtime?.active === true;
   } catch { return false; }
 }
 
@@ -755,14 +747,14 @@ function showControlCenter() {
 
 app.whenReady().then(async () => {
   if (usageCliRequested) {
-    const collectorIsRunning = await backgroundCollectorIsActive();
+    const collectorMayOwnSession = await backgroundCollectorMayOwnSession();
     const code = await runUsageCli(process.argv.slice(2), {
       dataPath: dataPath(),
       // A separate CLI process must not open a second copy of the persistent
       // subscription browser profile while the background collector owns it.
-      // If no healthy collector exists, this short-lived Electron process can
-      // safely refresh the configured sources itself before printing values.
-      refresh: collectorIsRunning ? undefined : refreshAllProviders,
+      // Only when no process claims the profile can this short-lived Electron
+      // process safely refresh configured sources before printing values.
+      refresh: collectorMayOwnSession ? undefined : refreshAllProviders,
     });
     app.exit(code);
     return;

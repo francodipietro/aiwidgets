@@ -15,6 +15,7 @@ const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
+const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
@@ -632,37 +633,44 @@ function refreshAllProviders() {
     return readCollector();
   })();
   refreshInFlight = task;
-  task.finally(() => { if (refreshInFlight === task) refreshInFlight = undefined; });
+  task.then(
+    () => { if (refreshInFlight === task) refreshInFlight = undefined; },
+    () => { if (refreshInFlight === task) refreshInFlight = undefined; },
+  );
   return task;
 }
 
 async function processCliRefreshRequests() {
   if (cliRefreshInFlight) return;
-  let names;
-  try { names = await readdir(cliRefreshRequestDirectory()); }
-  catch { return; }
-  const requests = [];
-  for (const name of names) {
-    if (!name.endsWith('.json')) continue;
-    const file = path.join(cliRefreshRequestDirectory(), name);
-    try {
-      const request = JSON.parse(await readFile(file, 'utf8'));
-      if (typeof request?.id === 'string' && request.id) requests.push({ file, id: request.id });
-    } catch { /* Ignore an incomplete or invalid request file. */ }
-  }
-  if (!requests.length) return;
   cliRefreshInFlight = true;
   try {
-    await refreshAllProviders();
-    await Promise.all(requests.map(async ({ file, id }) => {
-      await writeJson(cliRefreshResponsePath(id), { id, completedAt: new Date().toISOString() });
-      await unlink(file).catch(() => {});
-    }));
-  } catch (error) {
-    await Promise.all(requests.map(async ({ file, id }) => {
-      await writeJson(cliRefreshResponsePath(id), { id, error: error.message || String(error) });
-      await unlink(file).catch(() => {});
-    }));
+    let names;
+    try { names = await readdir(cliRefreshRequestDirectory()); }
+    catch { return; }
+    const requests = [];
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const file = path.join(cliRefreshRequestDirectory(), name);
+      try {
+        const request = JSON.parse(await readFile(file, 'utf8'));
+        if (typeof request?.id === 'string' && CLI_REFRESH_REQUEST_ID.test(request.id) && name === `${request.id}.json`) {
+          requests.push({ file, id: request.id });
+        }
+      } catch { /* Ignore an incomplete or invalid request file. */ }
+    }
+    if (!requests.length) return;
+    try {
+      await refreshAllProviders();
+      await Promise.all(requests.map(async ({ file, id }) => {
+        await writeJson(cliRefreshResponsePath(id), { id, completedAt: new Date().toISOString() });
+        await unlink(file).catch(() => {});
+      }));
+    } catch (error) {
+      await Promise.all(requests.map(async ({ file, id }) => {
+        await writeJson(cliRefreshResponsePath(id), { id, error: error.message || String(error) });
+        await unlink(file).catch(() => {});
+      }));
+    }
   } finally {
     cliRefreshInFlight = false;
   }

@@ -84,6 +84,9 @@ when intentionally reading the saved snapshot.
 # From a development checkout (also works when the background app is stopped)
 npm run usage
 
+# Ubuntu-only fallback when the local Electron sandbox helper is not configured
+npm run usage:linux
+
 # From an installed package
 aiwidgets usage
 

@@ -71,6 +71,33 @@ node scripts/aiwidgets-usage.mjs codex --session 61 --weekly 39 --reset "2026-09
 
 The helper only writes local JSON. It does not authenticate with or call any provider.
 
+## Terminal usage CLI
+
+The usage CLI asks the running AI Widgets background collector to refresh the
+configured providers, then prints enabled values. If no healthy collector is
+running, it starts a short-lived hidden collector itself and reuses the local
+provider sessions. This keeps relative Claude resets and all usage figures
+current without a visible browser or a second sign-in. Use `--no-refresh` only
+when intentionally reading the saved snapshot.
+
+```bash
+# From a development checkout (also works when the background app is stopped)
+npm run usage
+
+# Ubuntu-only fallback when the local Electron sandbox helper is not configured
+npm run usage:linux
+
+# From an installed package
+aiwidgets usage
+
+# Machine-readable output, including disabled providers
+npm run --silent usage -- --json --all
+aiwidgets usage --json --all
+
+# Read the saved values without updating
+aiwidgets usage --no-refresh
+```
+
 ## Validation and packaging
 
 ```bash

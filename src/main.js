@@ -1,10 +1,12 @@
 import electron from 'electron';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
+import { runUsageCli } from './usage-cli.mjs';
 
 const { app, BrowserWindow, ipcMain, screen } = electron;
 const execFileAsync = promisify(execFile);
@@ -12,6 +14,10 @@ const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
+const HEARTBEAT_FILE = 'collector-heartbeat.json';
+const CLI_REFRESH_DIRECTORY = 'usage-refresh';
+const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
+const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
@@ -44,25 +50,45 @@ const COPILOT_PREMIUM_INCLUDED = 300;
 
 let windowRef;
 let quitting = false;
+let refreshInFlight;
+let cliRefreshInFlight = false;
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
 // extension remains the separate compact usage view in the top panel.
 const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
+const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
 
-if (!app.requestSingleInstanceLock()) app.quit();
-app.on('second-instance', (_event, commandLine) => {
-  if (commandLine.includes('--quit')) {
-    requestQuit();
-    return;
-  }
-  showControlCenter();
-});
+// The usage command only extracts text from hidden pages. Disable unused GPU
+// paths so a terminal invocation does not emit VA-API/WebGL diagnostics.
+if (usageCliRequested) {
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+  app.commandLine.appendSwitch('disable-webgl');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
+  app.commandLine.appendSwitch('disable-accelerated-video-decode');
+  app.commandLine.appendSwitch('disable-features', 'VaapiVideoDecoder,VaapiVideoEncoder');
+}
+
+if (!usageCliRequested) {
+  if (!app.requestSingleInstanceLock()) app.quit();
+  app.on('second-instance', (_event, commandLine) => {
+    if (commandLine.includes('--quit')) {
+      requestQuit();
+      return;
+    }
+    showControlCenter();
+  });
+}
 
 function dataPath() { return path.join(app.getPath('userData'), DATA_FILE); }
 function collectorPath() { return path.join(app.getPath('userData'), COLLECTOR_FILE); }
 function runtimePath() { return path.join(app.getPath('userData'), RUNTIME_FILE); }
+function heartbeatPath() { return path.join(app.getPath('userData'), HEARTBEAT_FILE); }
+function cliRefreshRequestDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'requests'); }
+function cliRefreshResponseDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses'); }
+function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
 
 async function fileExists(target) {
   try { await access(target, constants.F_OK); return true; } catch { return false; }
@@ -70,13 +96,45 @@ async function fileExists(target) {
 
 async function writeJson(target, value) {
   await mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.tmp`;
+  const temporary = `${target}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, target);
 }
 
+async function ensureCliRefreshDirectories() {
+  await Promise.all([
+    mkdir(cliRefreshRequestDirectory(), { recursive: true }),
+    mkdir(cliRefreshResponseDirectory(), { recursive: true }),
+  ]);
+}
+
+async function pruneCliRefreshResponses() {
+  const cutoff = Date.now() - CLI_REFRESH_RESPONSE_TTL_MS;
+  let names;
+  try { names = await readdir(cliRefreshResponseDirectory()); }
+  catch { return; }
+  await Promise.all(names.filter((name) => name.endsWith('.json')).map(async (name) => {
+    const file = path.join(cliRefreshResponseDirectory(), name);
+    try {
+      if ((await stat(file)).mtimeMs < cutoff) await unlink(file);
+    } catch { /* A CLI may have consumed the response first. */ }
+  }));
+}
+
 async function setRuntimeActive(active) {
   await writeJson(runtimePath(), { active: Boolean(active), updatedAt: new Date().toISOString() });
+}
+
+async function setRuntimeHeartbeat() {
+  await writeJson(heartbeatPath(), { updatedAt: new Date().toISOString() });
+}
+
+
+async function backgroundCollectorMayOwnSession() {
+  try {
+    const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));
+    return runtime?.active === true;
+  } catch { return false; }
 }
 
 async function requestQuit() {
@@ -572,12 +630,57 @@ async function refreshProvider(providerId, source = 'default') {
   return refreshPageProvider(providerId, source);
 }
 
-async function refreshAllProviders() {
-  const data = await readData();
-  await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
-    ? [refreshProvider('copilot')]
-    : [refreshProvider(providerId)]));
-  return readCollector();
+function refreshAllProviders() {
+  if (refreshInFlight) return refreshInFlight;
+  const task = (async () => {
+    const data = await readData();
+    await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
+      ? [refreshProvider('copilot')]
+      : [refreshProvider(providerId)]));
+    return readCollector();
+  })();
+  refreshInFlight = task;
+  task.then(
+    () => { if (refreshInFlight === task) refreshInFlight = undefined; },
+    () => { if (refreshInFlight === task) refreshInFlight = undefined; },
+  );
+  return task;
+}
+
+async function processCliRefreshRequests() {
+  if (cliRefreshInFlight) return;
+  cliRefreshInFlight = true;
+  try {
+    let names;
+    try { names = await readdir(cliRefreshRequestDirectory()); }
+    catch { return; }
+    const requests = [];
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const file = path.join(cliRefreshRequestDirectory(), name);
+      try {
+        const request = JSON.parse(await readFile(file, 'utf8'));
+        if (typeof request?.id === 'string' && CLI_REFRESH_REQUEST_ID.test(request.id) && name === `${request.id}.json`) {
+          requests.push({ file, id: request.id });
+        }
+      } catch { /* Ignore an incomplete or invalid request file. */ }
+    }
+    if (!requests.length) return;
+    try {
+      await refreshAllProviders();
+      await Promise.all(requests.map(async ({ file, id }) => {
+        await writeJson(cliRefreshResponsePath(id), { id, completedAt: new Date().toISOString() });
+        await unlink(file).catch(() => {});
+      }));
+    } catch (error) {
+      await Promise.all(requests.map(async ({ file, id }) => {
+        await writeJson(cliRefreshResponsePath(id), { id, error: error.message || String(error) });
+        await unlink(file).catch(() => {});
+      }));
+    }
+  } finally {
+    cliRefreshInFlight = false;
+  }
 }
 
 async function openProvider(providerId, source = 'default') {
@@ -643,13 +746,32 @@ function showControlCenter() {
 }
 
 app.whenReady().then(async () => {
+  if (usageCliRequested) {
+    const collectorMayOwnSession = await backgroundCollectorMayOwnSession();
+    const code = await runUsageCli(process.argv.slice(2), {
+      dataPath: dataPath(),
+      // A separate CLI process must not open a second copy of the persistent
+      // subscription browser profile while the background collector owns it.
+      // Only when no process claims the profile can this short-lived Electron
+      // process safely refresh configured sources before printing values.
+      refresh: collectorMayOwnSession ? undefined : refreshAllProviders,
+    });
+    app.exit(code);
+    return;
+  }
   if (quitRequested) {
     await requestQuit();
     return;
   }
-  await ensureDataFile(); await readCollector(); await setRuntimeActive(true);
+  await ensureDataFile(); await readCollector(); await setRuntimeActive(true); await setRuntimeHeartbeat();
+  await ensureCliRefreshDirectories();
+  await pruneCliRefreshResponses();
   refreshAllProviders().catch(() => {});
-  setInterval(() => { refreshAllProviders(); }, 60_000);
+  setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
+  setInterval(() => { setRuntimeHeartbeat().catch(() => {}); }, 5_000);
+  processCliRefreshRequests().catch(() => {});
+  setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);
+  setInterval(() => { pruneCliRefreshResponses().catch(() => {}); }, CLI_REFRESH_RESPONSE_TTL_MS);
   setInterval(async () => {
     try {
       const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));
@@ -661,7 +783,11 @@ app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: process.platform !== 'linux' });
   if (openSettingsOnStart) showControlCenter();
 });
-app.on('before-quit', () => { quitting = true; setRuntimeActive(false).catch(() => {}); });
+app.on('before-quit', () => {
+  if (usageCliRequested) return;
+  quitting = true;
+  setRuntimeActive(false).catch(() => {});
+});
 app.on('activate', showControlCenter);
 
 ipcMain.handle('usage:read', readData);

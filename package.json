@@ -1,6 +1,6 @@
 {
   "name": "aiwidgets",
-  "version": "0.4.18",
+  "version": "0.4.19",
   "description": "Local subscription-usage widgets for Claude, Codex, and GitHub Copilot",
   "private": true,
   "author": "AI Widgets",
@@ -10,7 +10,10 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "check": "node --check src/main.js && node --check src/preload.cjs && node --check src/renderer.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
+    "dev:linux": "electron --no-sandbox . --dev",
+    "usage": "electron . usage",
+    "usage:linux": "electron --no-sandbox . usage",
+    "check": "node --check src/main.js && node --check src/usage-cli.mjs && node --check src/preload.cjs && node --check src/renderer.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
     "package:linux": "electron-builder --linux AppImage && node scripts/package-deb.mjs",
     "package:gnome": "cd gnome-extension/aiwidgets@fdipietro.dev && rm -f ../../dist/aiwidgets-gnome-shell.zip && zip -j ../../dist/aiwidgets-gnome-shell.zip metadata.json extension.js stylesheet.css ../../imgs/logo_chatgpt.svg ../../imgs/logo_claude.svg ../../imgs/logo_copilot.png",
     "package:mac": "electron-builder --mac dmg zip"

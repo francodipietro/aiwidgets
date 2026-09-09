@@ -57,6 +57,17 @@ const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
 const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
 
+// The usage command only extracts text from hidden pages. Disable unused GPU
+// paths so a terminal invocation does not emit VA-API/WebGL diagnostics.
+if (usageCliRequested) {
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+  app.commandLine.appendSwitch('disable-webgl');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
+  app.commandLine.appendSwitch('disable-accelerated-video-decode');
+  app.commandLine.appendSwitch('disable-features', 'VaapiVideoDecoder,VaapiVideoEncoder');
+}
+
 if (!usageCliRequested) {
   if (!app.requestSingleInstanceLock()) app.quit();
   app.on('second-instance', (_event, commandLine) => {

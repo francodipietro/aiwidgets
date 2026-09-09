@@ -1,5 +1,5 @@
 import electron from 'electron';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
@@ -13,8 +13,7 @@ const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
-const CLI_REFRESH_REQUEST_FILE = 'usage-refresh-request.json';
-const CLI_REFRESH_RESPONSE_FILE = 'usage-refresh-response.json';
+const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
@@ -82,8 +81,8 @@ if (!usageCliRequested) {
 function dataPath() { return path.join(app.getPath('userData'), DATA_FILE); }
 function collectorPath() { return path.join(app.getPath('userData'), COLLECTOR_FILE); }
 function runtimePath() { return path.join(app.getPath('userData'), RUNTIME_FILE); }
-function cliRefreshRequestPath() { return path.join(app.getPath('userData'), CLI_REFRESH_REQUEST_FILE); }
-function cliRefreshResponsePath() { return path.join(app.getPath('userData'), CLI_REFRESH_RESPONSE_FILE); }
+function cliRefreshRequestDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'requests'); }
+function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
 
 async function fileExists(target) {
   try { await access(target, constants.F_OK); return true; } catch { return false; }
@@ -615,22 +614,33 @@ function refreshAllProviders() {
   return task;
 }
 
-async function processCliRefreshRequest() {
+async function processCliRefreshRequests() {
   if (cliRefreshInFlight) return;
-  let request;
-  try { request = JSON.parse(await readFile(cliRefreshRequestPath(), 'utf8')); }
+  let names;
+  try { names = await readdir(cliRefreshRequestDirectory()); }
   catch { return; }
-  if (!request?.id || typeof request.id !== 'string') return;
-  try {
-    const previous = JSON.parse(await readFile(cliRefreshResponsePath(), 'utf8'));
-    if (previous?.id === request.id) return;
-  } catch { /* No previous response. */ }
+  const requests = [];
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const file = path.join(cliRefreshRequestDirectory(), name);
+    try {
+      const request = JSON.parse(await readFile(file, 'utf8'));
+      if (typeof request?.id === 'string' && request.id) requests.push({ file, id: request.id });
+    } catch { /* Ignore an incomplete or invalid request file. */ }
+  }
+  if (!requests.length) return;
   cliRefreshInFlight = true;
   try {
     await refreshAllProviders();
-    await writeJson(cliRefreshResponsePath(), { id: request.id, completedAt: new Date().toISOString() });
+    await Promise.all(requests.map(async ({ file, id }) => {
+      await writeJson(cliRefreshResponsePath(id), { id, completedAt: new Date().toISOString() });
+      await unlink(file).catch(() => {});
+    }));
   } catch (error) {
-    await writeJson(cliRefreshResponsePath(), { id: request.id, error: error.message || String(error) });
+    await Promise.all(requests.map(async ({ file, id }) => {
+      await writeJson(cliRefreshResponsePath(id), { id, error: error.message || String(error) });
+      await unlink(file).catch(() => {});
+    }));
   } finally {
     cliRefreshInFlight = false;
   }
@@ -720,8 +730,8 @@ app.whenReady().then(async () => {
   refreshAllProviders().catch(() => {});
   setInterval(() => { refreshAllProviders(); }, 60_000);
   setInterval(() => { setRuntimeActive(true).catch(() => {}); }, 5_000);
-  processCliRefreshRequest().catch(() => {});
-  setInterval(() => { processCliRefreshRequest().catch(() => {}); }, 500);
+  processCliRefreshRequests().catch(() => {});
+  setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);
   setInterval(async () => {
     try {
       const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));
@@ -733,7 +743,11 @@ app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: process.platform !== 'linux' });
   if (openSettingsOnStart) showControlCenter();
 });
-app.on('before-quit', () => { quitting = true; setRuntimeActive(false).catch(() => {}); });
+app.on('before-quit', () => {
+  if (usageCliRequested) return;
+  quitting = true;
+  setRuntimeActive(false).catch(() => {});
+});
 app.on('activate', showControlCenter);
 
 ipcMain.handle('usage:read', readData);

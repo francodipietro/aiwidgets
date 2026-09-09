@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -14,8 +14,7 @@ const palettes = {
   copilot: { foreground: [184, 192, 204], background: [35, 39, 47] },
 };
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
-const REFRESH_REQUEST_FILE = 'usage-refresh-request.json';
-const REFRESH_RESPONSE_FILE = 'usage-refresh-response.json';
+const REFRESH_DIRECTORY = 'usage-refresh';
 const RUNTIME_FILE = 'runtime.json';
 const FRESHNESS_WINDOW_MS = 60_000;
 
@@ -45,8 +44,6 @@ async function requestRefresh(dataFile, refreshLocally) {
     return;
   }
   const directory = path.dirname(dataFile);
-  const requestFile = path.join(directory, REFRESH_REQUEST_FILE);
-  const responseFile = path.join(directory, REFRESH_RESPONSE_FILE);
   try {
     const runtime = JSON.parse(await readFile(path.join(directory, RUNTIME_FILE), 'utf8'));
     if (runtime?.active === false) throw new Error('AI Widgets is not running. Start the background collector first.');
@@ -54,12 +51,15 @@ async function requestRefresh(dataFile, refreshLocally) {
     if (error.code !== 'ENOENT') throw error;
   }
   const id = randomUUID();
+  const requestFile = path.join(directory, REFRESH_DIRECTORY, 'requests', `${id}.json`);
+  const responseFile = path.join(directory, REFRESH_DIRECTORY, 'responses', `${id}.json`);
   await writeJson(requestFile, { id, requestedAt: new Date().toISOString() });
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     try {
       const response = JSON.parse(await readFile(responseFile, 'utf8'));
       if (response.id === id) {
+        await unlink(responseFile).catch(() => {});
         if (response.error) throw new Error(response.error);
         return;
       }
@@ -68,6 +68,7 @@ async function requestRefresh(dataFile, refreshLocally) {
     }
     await pause(250);
   }
+  await unlink(requestFile).catch(() => {});
   throw new Error('AI Widgets did not respond within 45 seconds. Start AI Widgets and keep it running in the background, or use --no-refresh to read the saved snapshot.');
 }
 

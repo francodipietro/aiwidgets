@@ -18,6 +18,7 @@ const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const REFRESH_DIRECTORY = 'usage-refresh';
 const RUNTIME_FILE = 'runtime.json';
 const FRESHNESS_WINDOW_MS = 60_000;
+const COLLECTOR_HEARTBEAT_MS = 15_000;
 
 function defaultDataPath() {
   if (process.env.AIWIDGETS_DATA) return process.env.AIWIDGETS_DATA;
@@ -45,12 +46,18 @@ async function requestRefresh(dataFile, refreshLocally) {
     return;
   }
   const directory = path.dirname(dataFile);
+  let runtime;
   try {
-    const runtime = JSON.parse(await readFile(path.join(directory, RUNTIME_FILE), 'utf8'));
-    if (runtime?.active === false) throw new Error('AI Widgets is not running. Start the background collector first.');
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+    runtime = JSON.parse(await readFile(path.join(directory, RUNTIME_FILE), 'utf8'));
+  } catch {
+    throw new Error('AI Widgets background collector is not running. Start AI Widgets or use --no-refresh to read the saved snapshot.');
   }
+  const updatedAt = Date.parse(runtime?.updatedAt || '');
+  const healthy = runtime?.active === true
+    && Number.isFinite(updatedAt)
+    && Date.now() - updatedAt >= 0
+    && Date.now() - updatedAt < COLLECTOR_HEARTBEAT_MS;
+  if (!healthy) throw new Error('AI Widgets background collector is not running. Start AI Widgets or use --no-refresh to read the saved snapshot.');
   const id = randomUUID();
   const requestFile = path.join(directory, REFRESH_DIRECTORY, 'requests', `${id}.json`);
   const responseFile = path.join(directory, REFRESH_DIRECTORY, 'responses', `${id}.json`);
@@ -130,7 +137,7 @@ function providerLines(provider, palette) {
 }
 
 export function usageHelp() {
-  return `Usage: aiwidgets usage [--json] [--all] [--refresh] [--no-refresh]\n\nShows enabled usage. A snapshot less than one minute old is reused; older data is refreshed through the running AI Widgets collector.\n\nOptions:\n  --json        Print machine-readable JSON.\n  --all         Include disabled providers.\n  --refresh     Force an update even when the snapshot is fresh.\n  --no-refresh  Read the saved snapshot without requesting an update.\n  --help        Show this help.\n\nAI Widgets must be running in the background to refresh Claude and Codex.`;
+  return `Usage: aiwidgets usage [--json] [--all] [--refresh] [--no-refresh]\n\nShows enabled usage. A snapshot less than one minute old is reused; older data is refreshed through the running AI Widgets collector or a short-lived hidden collector when the background app is stopped.\n\nOptions:\n  --json        Print machine-readable JSON.\n  --all         Include disabled providers.\n  --refresh     Force an update even when the snapshot is fresh.\n  --no-refresh  Read the saved snapshot without requesting an update.\n  --help        Show this help.\n\nAI Widgets uses the running background collector when available, or starts a short-lived hidden collector to refresh Claude and Codex when it is stopped.`;
 }
 
 export async function runUsageCli(args = process.argv.slice(2), options = {}) {

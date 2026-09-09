@@ -241,8 +241,15 @@ async function refreshNativeWidgets() {
   if (desktopWidgetRef && !desktopWidgetRef.isDestroyed()) {
     setDesktopWidgetBounds(state.data);
     applyDesktopWidgetInteractivity();
-    if (desktopLayout.desktopVisible) desktopWidgetRef.showInactive();
-    else desktopWidgetRef.hide();
+    // Calling showInactive() on every data refresh asks macOS to order this
+    // normal-level window again. That made the cards resurface above the app
+    // the user was working in once per refresh interval. Only order it in
+    // when it was explicitly hidden (or during initial creation).
+    if (desktopLayout.desktopVisible) {
+      if (!desktopWidgetRef.isVisible()) desktopWidgetRef.showInactive();
+    } else if (desktopWidgetRef.isVisible()) {
+      desktopWidgetRef.hide();
+    }
     desktopWidgetRef.webContents.send('desktop-widget:state', state);
   }
   if (trayPopoverRef && !trayPopoverRef.isDestroyed()) trayPopoverRef.webContents.send('desktop-widget:state', state);

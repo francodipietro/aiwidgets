@@ -318,13 +318,7 @@ function closestPrecedingLabel(text, valueIndex, labels) {
 
 function resetNearValue(text, valueIndex, nextValueIndex) {
   const end = nextValueIndex ?? Math.min(text.length, valueIndex + 700);
-  const after = text.slice(valueIndex, end).match(/\b(?:resets?|renews?)\b[^\n.]{0,70}/i)?.[0]?.trim();
-  if (after) return after;
-  // Some provider layouts put the reset label directly before the percentage.
-  // Use it only as a fallback and keep it within the same compact usage block.
-  const before = text.slice(Math.max(0, valueIndex - 180), valueIndex);
-  const matches = [...before.matchAll(/\b(?:resets?|renews?)\b[^\n.]{0,70}/ig)];
-  return matches.at(-1)?.[0]?.trim() || null;
+  return text.slice(valueIndex, end).match(/\b(?:resets?|renews?)\b[^\n.]{0,70}/i)?.[0]?.trim() || null;
 }
 
 function findUsage(text, labels) {
@@ -356,6 +350,12 @@ function parseVisibleUsage(providerId, text, source = 'default') {
   const session = findUsage(text, SESSION_LABELS);
   const weekly = findUsage(text, WEEKLY_LABELS);
   if (!session && !weekly) return null;
+  // A five-hour window and a seven-day window cannot legitimately reset at
+  // the same moment. Treat a duplicated label from Claude's page as
+  // ambiguous instead of presenting the session reset as the weekly reset.
+  if (providerId === 'claude' && session?.resetLabel && weekly?.resetLabel && session.resetLabel === weekly.resetLabel) {
+    weekly.resetLabel = null;
+  }
   return { session, weekly, note: `Synced from ${PROVIDERS[providerId].name} with AI Widgets.` };
 }
 

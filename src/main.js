@@ -299,8 +299,8 @@ async function applyGitHubCopilotUsage() {
   return parsed;
 }
 
-const SESSION_LABELS = [/\b5[-\s]*(?:h|hour(?:s)?)\s+usage\s+limit\b/ig, /\bcurrent\s+session\b/ig];
-const WEEKLY_LABELS = [/\bweekly\s+(?:usage\s+)?limits?\b/ig];
+const SESSION_LABELS = [/\b5[-\s]*(?:h|hour(?:s)?)\s+usage\s+limit\b/ig, /\bcurrent\s+session\b/ig, /\bsession\s*\(\s*5\s*h(?:r)?\s*\)/ig];
+const WEEKLY_LABELS = [/\bweekly\s+(?:usage\s+)?limits?\b/ig, /\bweekly\s*\(\s*7\s*days?\s*\)/ig];
 const USAGE_VALUE = /(\d{1,3})\s*%\s*(available|left|remaining|consumed|used)\b/ig;
 
 function closestPrecedingLabel(text, valueIndex, labels) {
@@ -316,9 +316,15 @@ function closestPrecedingLabel(text, valueIndex, labels) {
   return closest;
 }
 
-function resetAfterValue(text, valueIndex, nextValueIndex) {
+function resetNearValue(text, valueIndex, nextValueIndex) {
   const end = nextValueIndex ?? Math.min(text.length, valueIndex + 700);
-  return text.slice(valueIndex, end).match(/\b(?:resets?|renews?)\b[^\n.]{0,70}/i)?.[0]?.trim() || null;
+  const after = text.slice(valueIndex, end).match(/\b(?:resets?|renews?)\b[^\n.]{0,70}/i)?.[0]?.trim();
+  if (after) return after;
+  // Some provider layouts put the reset label directly before the percentage.
+  // Use it only as a fallback and keep it within the same compact usage block.
+  const before = text.slice(Math.max(0, valueIndex - 180), valueIndex);
+  const matches = [...before.matchAll(/\b(?:resets?|renews?)\b[^\n.]{0,70}/ig)];
+  return matches.at(-1)?.[0]?.trim() || null;
 }
 
 function findUsage(text, labels) {
@@ -335,7 +341,7 @@ function findUsage(text, labels) {
     const distance = value.index - labelIndex;
     if (!selected || distance < selected.distance) selected = { ...value, distance, nextIndex: values[index + 1]?.index };
   }
-  return selected ? { available: selected.available, resetLabel: resetAfterValue(text, selected.index, selected.nextIndex) } : null;
+  return selected ? { available: selected.available, resetLabel: resetNearValue(text, selected.index, selected.nextIndex) } : null;
 }
 
 function parseVisibleUsage(providerId, text, source = 'default') {
@@ -408,7 +414,7 @@ function findActionsUsage(text) {
       used,
       included,
       ...(Number.isFinite(billedAmount) ? { billedAmount } : {}),
-      resetLabel: resetAfterValue(text, match.index),
+      resetLabel: resetNearValue(text, match.index),
     };
   }
   return null;
@@ -420,9 +426,9 @@ async function applyCollectedUsage(providerId, text, source = 'default') {
   const target = await ensureDataFile();
   const data = await readData();
   const provider = data.providers.find((item) => item.id === providerId);
-  if (parsed.session) provider.session = { available: parsed.session.available, resetsAt: provider.session?.resetsAt || null, resetLabel: parsed.session.resetLabel || provider.session?.resetLabel || null };
-  if (parsed.weekly) provider.weekly = { available: parsed.weekly.available, resetsAt: provider.weekly?.resetsAt || null, resetLabel: parsed.weekly.resetLabel || provider.weekly?.resetLabel || null };
-  if (parsed.monthly) provider.monthly = { available: parsed.monthly.available, resetsAt: provider.monthly?.resetsAt || null, resetLabel: parsed.monthly.resetLabel || provider.monthly?.resetLabel || null, label: parsed.monthly.label || provider.monthly?.label || null };
+  if (parsed.session) provider.session = { available: parsed.session.available, resetsAt: null, resetLabel: parsed.session.resetLabel || null };
+  if (parsed.weekly) provider.weekly = { available: parsed.weekly.available, resetsAt: null, resetLabel: parsed.weekly.resetLabel || null };
+  if (parsed.monthly) provider.monthly = { available: parsed.monthly.available, resetsAt: null, resetLabel: parsed.monthly.resetLabel || null, label: parsed.monthly.label || provider.monthly?.label || null };
   if (parsed.actionsMinutes) provider.actionsMinutes = parsed.actionsMinutes;
   provider.note = parsed.note;
   data.updatedAt = new Date().toISOString();

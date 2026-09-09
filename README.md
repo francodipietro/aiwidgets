@@ -2,7 +2,7 @@
 
 Local, privacy-preserving subscription-usage widgets for Claude, Codex, and GitHub Copilot. AI Widgets shows session and weekly usage for Claude and Codex, plus monthly Premium requests and GitHub Actions minutes for Copilot.
 
-Ubuntu GNOME is the current native-widget target: it provides desktop cards and a top-panel menu. macOS is a first-class target for the project: the Electron control window already packages for macOS, while the native macOS menu-bar and desktop-widget integration is the next adaptation step.
+Ubuntu GNOME and macOS both provide desktop cards and a top-bar integration. The Electron control window is shared; the native integrations render the same locally stored usage data.
 
 The app uses its own persistent, isolated browser profile to read the Claude and Codex usage pages. Chrome does not need to be open. Copilot is read from GitHub's authenticated Billing API through the local GitHub CLI. AI Widgets stores normalized usage values locally; it does not store conversations, page text, or GitHub tokens.
 
@@ -10,7 +10,7 @@ The app uses its own persistent, isolated browser profile to read the Claude and
 
 - Node.js 20 or newer
 - Ubuntu with GNOME Shell 46 for the native desktop widget and top-panel menu
-- macOS for the Electron control window; native menu-bar and desktop widgets are planned
+- macOS for the Electron control window, menu-bar item, and desktop cards
 - [GitHub CLI](https://cli.github.com/) (`gh`) for GitHub Copilot data
 
 ## Run locally
@@ -59,6 +59,12 @@ gnome-extensions enable aiwidgets@fdipietro.dev
 
 Use **Edit position and size** in the panel menu before dragging a card. Hold `Ctrl` and use the mouse wheel over a card to resize it. **Anchor at top right** restores automatic positioning on the active primary monitor.
 
+## macOS desktop widget and menu bar
+
+On macOS, AI Widgets adds an **AI** item to the menu bar. Select it to see the same provider cards and actions as the GNOME panel menu: update usage, show or hide the desktop cards, edit their position and size, anchor them at the top right, open settings, or exit the app.
+
+Use **Edit position and size** before dragging the cards. Hold `Control` and scroll over a card to resize it. Once pinned, cards sit on the desktop and normal application windows cover them, matching the GNOME behavior.
+
 ## Local data format
 
 The example schema is in [data/usage.example.json](data/usage.example.json). `available` is a percentage from `0` to `100`; the UI displays the inverse as consumed usage.
@@ -106,4 +112,4 @@ npm run package:linux
 npm run package:mac
 ```
 
-`dist/` and `node_modules/` are generated locally and ignored by Git. macOS packaging builds the Electron control window; the GNOME extension is Ubuntu-specific and is not included on macOS. The macOS-native widget and menu-bar integration is intentionally tracked as future work.
+`dist/` and `node_modules/` are generated locally and ignored by Git. macOS packaging includes the Electron control window, menu-bar integration, and desktop cards. The GNOME extension is Ubuntu-specific and is not included on macOS.

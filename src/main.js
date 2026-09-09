@@ -1,5 +1,5 @@
 import electron from 'electron';
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
@@ -14,6 +14,7 @@ const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
+const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
@@ -82,6 +83,7 @@ function dataPath() { return path.join(app.getPath('userData'), DATA_FILE); }
 function collectorPath() { return path.join(app.getPath('userData'), COLLECTOR_FILE); }
 function runtimePath() { return path.join(app.getPath('userData'), RUNTIME_FILE); }
 function cliRefreshRequestDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'requests'); }
+function cliRefreshResponseDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses'); }
 function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
 
 async function fileExists(target) {
@@ -93,6 +95,26 @@ async function writeJson(target, value) {
   const temporary = `${target}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, target);
+}
+
+async function ensureCliRefreshDirectories() {
+  await Promise.all([
+    mkdir(cliRefreshRequestDirectory(), { recursive: true }),
+    mkdir(cliRefreshResponseDirectory(), { recursive: true }),
+  ]);
+}
+
+async function pruneCliRefreshResponses() {
+  const cutoff = Date.now() - CLI_REFRESH_RESPONSE_TTL_MS;
+  let names;
+  try { names = await readdir(cliRefreshResponseDirectory()); }
+  catch { return; }
+  await Promise.all(names.filter((name) => name.endsWith('.json')).map(async (name) => {
+    const file = path.join(cliRefreshResponseDirectory(), name);
+    try {
+      if ((await stat(file)).mtimeMs < cutoff) await unlink(file);
+    } catch { /* A CLI may have consumed the response first. */ }
+  }));
 }
 
 async function setRuntimeActive(active) {
@@ -727,11 +749,14 @@ app.whenReady().then(async () => {
     return;
   }
   await ensureDataFile(); await readCollector(); await setRuntimeActive(true);
+  await ensureCliRefreshDirectories();
+  await pruneCliRefreshResponses();
   refreshAllProviders().catch(() => {});
   setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
   setInterval(() => { setRuntimeActive(true).catch(() => {}); }, 5_000);
   processCliRefreshRequests().catch(() => {});
   setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);
+  setInterval(() => { pruneCliRefreshResponses().catch(() => {}); }, CLI_REFRESH_RESPONSE_TTL_MS);
   setInterval(async () => {
     try {
       const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));

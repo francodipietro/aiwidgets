@@ -73,12 +73,15 @@ The helper only writes local JSON. It does not authenticate with or call any pro
 
 ## Terminal usage CLI
 
-The usage CLI prints the already synchronized values for enabled providers. It
-only reads the local data file: it does not open a browser, sign in, or contact
-any provider.
+The usage CLI asks the running AI Widgets background collector to refresh the
+configured providers, then prints enabled values. If no healthy collector is
+running, it starts a short-lived hidden collector itself and reuses the local
+provider sessions. This keeps relative Claude resets and all usage figures
+current without a visible browser or a second sign-in. Use `--no-refresh` only
+when intentionally reading the saved snapshot.
 
 ```bash
-# From a development checkout
+# From a development checkout (also works when the background app is stopped)
 npm run usage
 
 # From an installed package
@@ -87,6 +90,9 @@ aiwidgets usage
 # Machine-readable output, including disabled providers
 npm run --silent usage -- --json --all
 aiwidgets usage --json --all
+
+# Read the saved values without updating
+aiwidgets usage --no-refresh
 ```
 
 ## Validation and packaging

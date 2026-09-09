@@ -13,6 +13,8 @@ const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
+const CLI_REFRESH_REQUEST_FILE = 'usage-refresh-request.json';
+const CLI_REFRESH_RESPONSE_FILE = 'usage-refresh-response.json';
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
@@ -45,6 +47,8 @@ const COPILOT_PREMIUM_INCLUDED = 300;
 
 let windowRef;
 let quitting = false;
+let refreshInFlight;
+let cliRefreshInFlight = false;
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
 // extension remains the separate compact usage view in the top panel.
@@ -67,6 +71,8 @@ if (!usageCliRequested) {
 function dataPath() { return path.join(app.getPath('userData'), DATA_FILE); }
 function collectorPath() { return path.join(app.getPath('userData'), COLLECTOR_FILE); }
 function runtimePath() { return path.join(app.getPath('userData'), RUNTIME_FILE); }
+function cliRefreshRequestPath() { return path.join(app.getPath('userData'), CLI_REFRESH_REQUEST_FILE); }
+function cliRefreshResponsePath() { return path.join(app.getPath('userData'), CLI_REFRESH_RESPONSE_FILE); }
 
 async function fileExists(target) {
   try { await access(target, constants.F_OK); return true; } catch { return false; }
@@ -81,6 +87,14 @@ async function writeJson(target, value) {
 
 async function setRuntimeActive(active) {
   await writeJson(runtimePath(), { active: Boolean(active), updatedAt: new Date().toISOString() });
+}
+
+async function backgroundCollectorIsActive() {
+  try {
+    const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));
+    const updatedAt = Date.parse(runtime?.updatedAt || '');
+    return runtime?.active === true && Number.isFinite(updatedAt) && Date.now() - updatedAt >= 0 && Date.now() - updatedAt < 15_000;
+  } catch { return false; }
 }
 
 async function requestQuit() {
@@ -576,12 +590,39 @@ async function refreshProvider(providerId, source = 'default') {
   return refreshPageProvider(providerId, source);
 }
 
-async function refreshAllProviders() {
-  const data = await readData();
-  await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
-    ? [refreshProvider('copilot')]
-    : [refreshProvider(providerId)]));
-  return readCollector();
+function refreshAllProviders() {
+  if (refreshInFlight) return refreshInFlight;
+  const task = (async () => {
+    const data = await readData();
+    await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
+      ? [refreshProvider('copilot')]
+      : [refreshProvider(providerId)]));
+    return readCollector();
+  })();
+  refreshInFlight = task;
+  task.finally(() => { if (refreshInFlight === task) refreshInFlight = undefined; });
+  return task;
+}
+
+async function processCliRefreshRequest() {
+  if (cliRefreshInFlight) return;
+  let request;
+  try { request = JSON.parse(await readFile(cliRefreshRequestPath(), 'utf8')); }
+  catch { return; }
+  if (!request?.id || typeof request.id !== 'string') return;
+  try {
+    const previous = JSON.parse(await readFile(cliRefreshResponsePath(), 'utf8'));
+    if (previous?.id === request.id) return;
+  } catch { /* No previous response. */ }
+  cliRefreshInFlight = true;
+  try {
+    await refreshAllProviders();
+    await writeJson(cliRefreshResponsePath(), { id: request.id, completedAt: new Date().toISOString() });
+  } catch (error) {
+    await writeJson(cliRefreshResponsePath(), { id: request.id, error: error.message || String(error) });
+  } finally {
+    cliRefreshInFlight = false;
+  }
 }
 
 async function openProvider(providerId, source = 'default') {
@@ -648,7 +689,15 @@ function showControlCenter() {
 
 app.whenReady().then(async () => {
   if (usageCliRequested) {
-    const code = await runUsageCli(process.argv.slice(2), { dataPath: dataPath() });
+    const collectorIsRunning = await backgroundCollectorIsActive();
+    const code = await runUsageCli(process.argv.slice(2), {
+      dataPath: dataPath(),
+      // A separate CLI process must not open a second copy of the persistent
+      // subscription browser profile while the background collector owns it.
+      // If no healthy collector exists, this short-lived Electron process can
+      // safely refresh the configured sources itself before printing values.
+      refresh: collectorIsRunning ? undefined : refreshAllProviders,
+    });
     app.exit(code);
     return;
   }
@@ -659,6 +708,9 @@ app.whenReady().then(async () => {
   await ensureDataFile(); await readCollector(); await setRuntimeActive(true);
   refreshAllProviders().catch(() => {});
   setInterval(() => { refreshAllProviders(); }, 60_000);
+  setInterval(() => { setRuntimeActive(true).catch(() => {}); }, 5_000);
+  processCliRefreshRequest().catch(() => {});
+  setInterval(() => { processCliRefreshRequest().catch(() => {}); }, 500);
   setInterval(async () => {
     try {
       const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));

@@ -1,6 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 const providerNames = {
   claude: 'Claude',
@@ -13,11 +14,61 @@ const palettes = {
   copilot: { foreground: [184, 192, 204], background: [35, 39, 47] },
 };
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+const REFRESH_REQUEST_FILE = 'usage-refresh-request.json';
+const REFRESH_RESPONSE_FILE = 'usage-refresh-response.json';
+const RUNTIME_FILE = 'runtime.json';
+const FRESHNESS_WINDOW_MS = 60_000;
 
 function defaultDataPath() {
   if (process.env.AIWIDGETS_DATA) return process.env.AIWIDGETS_DATA;
   if (process.platform === 'darwin') return path.join(homedir(), 'Library', 'Application Support', 'aiwidgets', 'usage.json');
   return path.join(homedir(), '.config', 'aiwidgets', 'usage.json');
+}
+
+async function writeJson(target, value) {
+  await mkdir(path.dirname(target), { recursive: true });
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await rename(temporary, target);
+}
+
+const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function isFresh(data) {
+  const updatedAt = Date.parse(data?.updatedAt || '');
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt >= 0 && Date.now() - updatedAt < FRESHNESS_WINDOW_MS;
+}
+
+async function requestRefresh(dataFile, refreshLocally) {
+  if (refreshLocally) {
+    await refreshLocally();
+    return;
+  }
+  const directory = path.dirname(dataFile);
+  const requestFile = path.join(directory, REFRESH_REQUEST_FILE);
+  const responseFile = path.join(directory, REFRESH_RESPONSE_FILE);
+  try {
+    const runtime = JSON.parse(await readFile(path.join(directory, RUNTIME_FILE), 'utf8'));
+    if (runtime?.active === false) throw new Error('AI Widgets is not running. Start the background collector first.');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  const id = randomUUID();
+  await writeJson(requestFile, { id, requestedAt: new Date().toISOString() });
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = JSON.parse(await readFile(responseFile, 'utf8'));
+      if (response.id === id) {
+        if (response.error) throw new Error(response.error);
+        return;
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    await pause(250);
+  }
+  throw new Error('AI Widgets did not respond within 45 seconds. Start AI Widgets and keep it running in the background, or use --no-refresh to read the saved snapshot.');
 }
 
 function usagePercent(usage) {
@@ -73,7 +124,7 @@ function providerLines(provider, palette) {
 }
 
 export function usageHelp() {
-  return `Usage: aiwidgets usage [--json] [--all]\n\nShows the locally synchronized usage of enabled AI Widgets providers.\n\nOptions:\n  --json  Print machine-readable JSON.\n  --all   Include disabled providers.\n  --help  Show this help.\n\nThe command reads local data only; it does not open a browser or contact providers.`;
+  return `Usage: aiwidgets usage [--json] [--all] [--refresh] [--no-refresh]\n\nShows enabled usage. A snapshot less than one minute old is reused; older data is refreshed through the running AI Widgets collector.\n\nOptions:\n  --json        Print machine-readable JSON.\n  --all         Include disabled providers.\n  --refresh     Force an update even when the snapshot is fresh.\n  --no-refresh  Read the saved snapshot without requesting an update.\n  --help        Show this help.\n\nAI Widgets must be running in the background to refresh Claude and Codex.`;
 }
 
 export async function runUsageCli(args = process.argv.slice(2), options = {}) {
@@ -90,6 +141,21 @@ export async function runUsageCli(args = process.argv.slice(2), options = {}) {
     console.error(`AI Widgets data could not be read at ${target}: ${error.code === 'ENOENT' ? 'run AI Widgets and connect a provider first.' : error.message}`);
     return 1;
   }
+  const refreshNeeded = args.includes('--refresh') || (!args.includes('--no-refresh') && !isFresh(data));
+  if (refreshNeeded) {
+    try {
+      await requestRefresh(target, options.refresh);
+    } catch (error) {
+      console.error(`AI Widgets could not refresh usage: ${error.message}`);
+      return 1;
+    }
+    try {
+      data = JSON.parse(await readFile(target, 'utf8'));
+    } catch (error) {
+      console.error(`AI Widgets data could not be read after refresh: ${error.message}`);
+      return 1;
+    }
+  }
 
   const allProviders = Array.isArray(data.providers) ? data.providers : [];
   const enabled = Array.isArray(data.settings?.enabledProviders) ? data.settings.enabledProviders : [];
@@ -100,7 +166,8 @@ export async function runUsageCli(args = process.argv.slice(2), options = {}) {
   }
 
   console.log('AI Widgets usage');
-  console.log(`Updated: ${data.updatedAt ? new Date(data.updatedAt).toLocaleString() : 'not updated yet'}`);
+  const sourceLabel = refreshNeeded ? 'refreshed now' : args.includes('--no-refresh') ? 'saved snapshot' : 'fresh snapshot';
+  console.log(`Updated: ${data.updatedAt ? new Date(data.updatedAt).toLocaleString() : 'not updated yet'} · ${sourceLabel}`);
   if (!providers.length) {
     console.log('No providers are enabled. Open AI Widgets and choose them in Providers.');
     return 0;

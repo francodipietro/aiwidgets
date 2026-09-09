@@ -728,7 +728,7 @@ app.whenReady().then(async () => {
   }
   await ensureDataFile(); await readCollector(); await setRuntimeActive(true);
   refreshAllProviders().catch(() => {});
-  setInterval(() => { refreshAllProviders(); }, 60_000);
+  setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
   setInterval(() => { setRuntimeActive(true).catch(() => {}); }, 5_000);
   processCliRefreshRequests().catch(() => {});
   setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);

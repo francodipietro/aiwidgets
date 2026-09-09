@@ -81,6 +81,10 @@ function number(value) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 }
 
+function currency(value) {
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+}
+
 function ansi(text, code) {
   return useColor ? `\u001B[${code}m${text}\u001B[0m` : text;
 }
@@ -117,7 +121,7 @@ function providerLines(provider, palette) {
       ...usageLines(provider.monthly?.label || 'Premium requests', provider.monthly, palette),
       ...usageLines('Actions minutes', provider.actionsMinutes, palette),
       ...(Number.isFinite(Number(provider.actionsMinutes?.billedAmount))
-        ? [`  Billed this month: $${number(Number(provider.actionsMinutes.billedAmount))}`]
+        ? [`  Billed this month: $${currency(Number(provider.actionsMinutes.billedAmount))}`]
         : []),
     ];
   }

@@ -4,6 +4,7 @@ import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { runUsageCli } from './usage-cli.mjs';
 
@@ -13,6 +14,8 @@ const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
+const HEARTBEAT_FILE = 'collector-heartbeat.json';
+const COLLECTOR_HEARTBEAT_MS = 15_000;
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -83,6 +86,7 @@ if (!usageCliRequested) {
 function dataPath() { return path.join(app.getPath('userData'), DATA_FILE); }
 function collectorPath() { return path.join(app.getPath('userData'), COLLECTOR_FILE); }
 function runtimePath() { return path.join(app.getPath('userData'), RUNTIME_FILE); }
+function heartbeatPath() { return path.join(app.getPath('userData'), HEARTBEAT_FILE); }
 function cliRefreshRequestDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'requests'); }
 function cliRefreshResponseDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses'); }
 function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
@@ -93,7 +97,7 @@ async function fileExists(target) {
 
 async function writeJson(target, value) {
   await mkdir(path.dirname(target), { recursive: true });
-  const temporary = `${target}.tmp`;
+  const temporary = `${target}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   await rename(temporary, target);
 }
@@ -122,11 +126,22 @@ async function setRuntimeActive(active) {
   await writeJson(runtimePath(), { active: Boolean(active), updatedAt: new Date().toISOString() });
 }
 
+async function setRuntimeHeartbeat() {
+  await writeJson(heartbeatPath(), { updatedAt: new Date().toISOString() });
+}
+
+function heartbeatIsFresh(heartbeat) {
+  const updatedAt = Date.parse(heartbeat?.updatedAt || '');
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt >= 0 && Date.now() - updatedAt < COLLECTOR_HEARTBEAT_MS;
+}
+
 async function backgroundCollectorIsActive() {
   try {
-    const runtime = JSON.parse(await readFile(runtimePath(), 'utf8'));
-    const updatedAt = Date.parse(runtime?.updatedAt || '');
-    return runtime?.active === true && Number.isFinite(updatedAt) && Date.now() - updatedAt >= 0 && Date.now() - updatedAt < 15_000;
+    const [runtime, heartbeat] = await Promise.all([
+      readFile(runtimePath(), 'utf8').then(JSON.parse),
+      readFile(heartbeatPath(), 'utf8').then(JSON.parse),
+    ]);
+    return runtime?.active === true && heartbeatIsFresh(heartbeat);
   } catch { return false; }
 }
 
@@ -756,12 +771,12 @@ app.whenReady().then(async () => {
     await requestQuit();
     return;
   }
-  await ensureDataFile(); await readCollector(); await setRuntimeActive(true);
+  await ensureDataFile(); await readCollector(); await setRuntimeActive(true); await setRuntimeHeartbeat();
   await ensureCliRefreshDirectories();
   await pruneCliRefreshResponses();
   refreshAllProviders().catch(() => {});
   setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
-  setInterval(() => { setRuntimeActive(true).catch(() => {}); }, 5_000);
+  setInterval(() => { setRuntimeHeartbeat().catch(() => {}); }, 5_000);
   processCliRefreshRequests().catch(() => {});
   setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);
   setInterval(() => { pruneCliRefreshResponses().catch(() => {}); }, CLI_REFRESH_RESPONSE_TTL_MS);

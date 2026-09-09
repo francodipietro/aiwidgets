@@ -17,6 +17,7 @@ const palettes = {
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const REFRESH_DIRECTORY = 'usage-refresh';
 const RUNTIME_FILE = 'runtime.json';
+const HEARTBEAT_FILE = 'collector-heartbeat.json';
 const FRESHNESS_WINDOW_MS = 60_000;
 const COLLECTOR_HEARTBEAT_MS = 15_000;
 
@@ -47,12 +48,16 @@ async function requestRefresh(dataFile, refreshLocally) {
   }
   const directory = path.dirname(dataFile);
   let runtime;
+  let heartbeat;
   try {
-    runtime = JSON.parse(await readFile(path.join(directory, RUNTIME_FILE), 'utf8'));
+    [runtime, heartbeat] = await Promise.all([
+      readFile(path.join(directory, RUNTIME_FILE), 'utf8').then(JSON.parse),
+      readFile(path.join(directory, HEARTBEAT_FILE), 'utf8').then(JSON.parse),
+    ]);
   } catch {
     throw new Error('AI Widgets background collector is not running. Start AI Widgets or use --no-refresh to read the saved snapshot.');
   }
-  const updatedAt = Date.parse(runtime?.updatedAt || '');
+  const updatedAt = Date.parse(heartbeat?.updatedAt || '');
   const healthy = runtime?.active === true
     && Number.isFinite(updatedAt)
     && Date.now() - updatedAt >= 0
@@ -144,6 +149,11 @@ export async function runUsageCli(args = process.argv.slice(2), options = {}) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log(usageHelp());
     return 0;
+  }
+
+  if (args.includes('--refresh') && args.includes('--no-refresh')) {
+    console.error('Use either --refresh or --no-refresh, not both.');
+    return 1;
   }
 
   const target = options.dataPath || defaultDataPath();

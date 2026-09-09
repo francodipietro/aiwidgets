@@ -318,7 +318,18 @@ function closestPrecedingLabel(text, valueIndex, labels) {
 
 function resetNearValue(text, valueIndex, nextValueIndex) {
   const end = nextValueIndex ?? Math.min(text.length, valueIndex + 700);
-  return text.slice(valueIndex, end).match(/\b(?:resets?|renews?)\b[^\n.]{0,70}/i)?.[0]?.trim() || null;
+  const candidates = [];
+  const beforeStart = Math.max(0, valueIndex - 300);
+  const before = text.slice(beforeStart, valueIndex);
+  for (const match of before.matchAll(/\b(?:resets?|renews?)\b[^\n.]{0,70}/ig)) {
+    candidates.push({ text: match[0].trim(), distance: valueIndex - (beforeStart + match.index + match[0].length) });
+  }
+  const after = text.slice(valueIndex, end);
+  for (const match of after.matchAll(/\b(?:resets?|renews?)\b[^\n.]{0,70}/ig)) {
+    candidates.push({ text: match[0].trim(), distance: match.index });
+  }
+  candidates.sort((a, b) => a.distance - b.distance);
+  return candidates[0]?.text || null;
 }
 
 function findUsage(text, labels) {

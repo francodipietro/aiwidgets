@@ -47,7 +47,7 @@ let quitting = false;
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
 // extension remains the separate compact usage view in the top panel.
-let openSettingsOnStart = true;
+const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
 
@@ -645,6 +645,8 @@ app.whenReady().then(async () => {
       if (runtime?.active === false) await requestQuit();
     } catch { /* Missing runtime state means active. */ }
   }, 1000);
+  // Linux uses the package's XDG autostart desktop entry. macOS uses
+  // Electron's login-item integration until it gains a native widget host.
   app.setLoginItemSettings({ openAtLogin: process.platform !== 'linux' });
   if (openSettingsOnStart) showControlCenter();
 });

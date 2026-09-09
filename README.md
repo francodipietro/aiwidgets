@@ -41,6 +41,8 @@ The control window starts in English and creates its data file at:
 
 AI Widgets refreshes configured sources every minute while it is running. Copilot Pro annual is calculated from GitHub's reported Premium request usage and its documented 300-request monthly entitlement. GitHub Actions is calculated from the Billing API's runner costs, normalized to the included quota for the authenticated GitHub plan.
 
+On Ubuntu, the Debian package installs an XDG autostart entry. AI Widgets starts hidden after sign-in, performs an immediate refresh, and continues refreshing once per minute. Opening AI Widgets from the app menu shows the control window; **Exit AI Widgets** stops it until the next sign-in.
+
 Use **Providers** in the control window to choose which services are shown and refreshed. Copilot is disabled by default.
 
 ## GNOME desktop widget

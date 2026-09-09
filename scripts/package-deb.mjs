@@ -54,12 +54,22 @@ Icon=aiwidgets
 Terminal=false
 Categories=Utility;
 `;
+const autostart = `[Desktop Entry]
+Type=Application
+Name=AI Widgets background refresh
+Comment=Refresh AI Widgets usage data after sign-in
+Exec=aiwidgets --background
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+`;
 
 try {
   await rm(stage, { recursive: true, force: true });
   await mkdir(path.join(stage, 'DEBIAN'), { recursive: true });
   await mkdir(path.join(stage, 'opt'), { recursive: true });
   await mkdir(path.join(stage, 'usr', 'share', 'applications'), { recursive: true });
+  await mkdir(path.join(stage, 'etc', 'xdg', 'autostart'), { recursive: true });
   await mkdir(path.join(stage, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps'), { recursive: true });
   await cp(unpacked, path.join(stage, 'opt', 'aiwidgets'), { recursive: true, preserveTimestamps: true });
   await cp(appIcon, path.join(stage, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps', 'aiwidgets.svg'));
@@ -68,6 +78,7 @@ try {
     writeFile(path.join(stage, 'DEBIAN', 'postinst'), postinst),
     writeFile(path.join(stage, 'DEBIAN', 'postrm'), postrm),
     writeFile(path.join(stage, 'usr', 'share', 'applications', 'aiwidgets.desktop'), desktop),
+    writeFile(path.join(stage, 'etc', 'xdg', 'autostart', 'aiwidgets.desktop'), autostart),
   ]);
   await Promise.all([
     chmod(path.join(stage, 'DEBIAN', 'postinst'), 0o755),

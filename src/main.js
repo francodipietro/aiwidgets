@@ -909,7 +909,6 @@ function refreshAllProviders() {
     await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
       ? [refreshProvider('copilot')]
       : [refreshProvider(providerId)]));
-    await refreshNativeWidgets();
     return readCollector();
   })();
   refreshInFlight = task;

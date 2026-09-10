@@ -31,14 +31,15 @@ function render() {
   const providers = new Map((state.data?.providers || []).map((provider) => [provider.id, provider]));
   const ids = Array.isArray(state.data?.settings?.enabledProviders) ? state.data.settings.enabledProviders : ['claude', 'codex'];
   const cards = ids.filter((id) => ['claude', 'codex', 'copilot'].includes(id)).map((id) => card(providers.get(id), id, surface === 'panel')).join('');
+  const content = cards || '<section class="widget-empty">No providers selected. Open settings to choose one.</section>';
   document.body.classList.toggle('editing', surface === 'desktop' && state.layout?.editing === true);
   if (surface === 'desktop') {
-    root.innerHTML = `<section class="desktop-root" style="--card-width:${Math.max(150, Number(state.layout?.cardWidth) || 170)}px">${cards}</section>${state.layout?.editing ? '<div class="desktop-edit-hint">Drag cards to move · Hold Control and scroll to resize</div>' : ''}`;
+    root.innerHTML = `<section class="desktop-root" style="--card-width:${Math.max(150, Number(state.layout?.cardWidth) || 170)}px">${content}</section>${state.layout?.editing ? '<div class="desktop-edit-hint">Drag cards to move · Hold Control and scroll to resize</div>' : ''}`;
     return;
   }
   const editLabel = state.layout?.editing ? 'Pin cards to desktop' : 'Edit position and size';
   const visibilityLabel = state.layout?.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards';
-  root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage</div>${cards}<div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button><button data-action="settings">Open settings</button><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
+  root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage</div>${content}<div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button><button data-action="settings">Open settings</button><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
 }
 
 function renderError(error) {

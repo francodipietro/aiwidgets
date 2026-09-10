@@ -5,6 +5,8 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .desktop-root { display: flex; gap: 20px; align-items: flex-start; }
 .widget-card { width: var(--card-width); min-height: 258px; padding: 11px; border: 1px solid rgba(255,255,255,.17); border-radius: 14px; background: rgba(18,37,62,.92); box-shadow: 0 14px 34px rgba(0,0,0,.34); }
 .desktop-root .widget-card { height: 258px; overflow: hidden; }
+.widget-empty { width: var(--card-width, 100%); min-height: 96px; padding: 18px 14px; border: 1px solid rgba(255,255,255,.17); border-radius: 14px; background: rgba(18,37,62,.92); color: #d6dce8; font-size: 12px; line-height: 1.4; }
+.desktop-root .widget-empty { min-height: 258px; }
 .widget-card.claude { background: rgba(47,31,28,.92); }
 .widget-card.copilot { background: rgba(43,46,53,.94); }
 .widget-header { display: flex; gap: 6px; align-items: center; }

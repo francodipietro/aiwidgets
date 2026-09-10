@@ -379,7 +379,8 @@ async function toggleTrayPopover() {
 
 function createMenuBarItem() {
   if (!isMacDesktopIntegration() || trayRef) return;
-  const icon = nativeImage.createFromPath(path.join(import.meta.dirname, '..', 'imgs', 'logo_app.svg')).resize({ width: 18, height: 18 });
+  const icon = nativeImage.createFromPath(path.join(import.meta.dirname, '..', 'imgs', 'menu-bar-iconTemplate.svg')).resize({ width: 18, height: 18 });
+  icon.setTemplateImage(true);
   trayRef = new Tray(icon);
   trayRef.setTitle('AI');
   trayRef.setToolTip('AI Widgets');

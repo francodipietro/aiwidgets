@@ -8,12 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { runUsageCli } from './usage-cli.mjs';
 
-const { app, BrowserWindow, ipcMain, screen } = electron;
+const { app, BrowserWindow, ipcMain, nativeImage, screen, Tray } = electron;
 const execFileAsync = promisify(execFile);
 const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
+const DESKTOP_LAYOUT_FILE = 'desktop-widget.json';
 const HEARTBEAT_FILE = 'collector-heartbeat.json';
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
@@ -39,6 +40,20 @@ const DEFAULT_DATA = {
     { id: 'copilot', name: 'GitHub Copilot', accent: '#b8c0cc', monthly: null, actionsMinutes: null, note: 'Not connected yet.' }
   ]
 };
+const DEFAULT_DESKTOP_LAYOUT = {
+  version: 1,
+  x: null,
+  y: null,
+  cardWidth: 170,
+  desktopVisible: true,
+  editing: false,
+  autoPosition: true,
+};
+const PROVIDER_IDS = ['claude', 'codex', 'copilot'];
+const MAC_WIDGET_SPACING = 20;
+const MAC_WIDGET_MARGIN = 28;
+const MAC_WIDGET_HEIGHT = 286;
+const MAC_PANEL_WIDTH = 318;
 
 // GitHub's Billing API returns Actions costs per runner SKU. The dashboard's
 // included-minutes meter uses Linux-equivalent minutes, whose published base
@@ -49,6 +64,14 @@ const ACTIONS_INCLUDED_BY_GITHUB_PLAN = { free: 2000, pro: 3000 };
 const COPILOT_PREMIUM_INCLUDED = 300;
 
 let windowRef;
+let desktopWidgetRef;
+let trayPopoverRef;
+let trayRef;
+let desktopLayout = { ...DEFAULT_DESKTOP_LAYOUT };
+let desktopWidgetData = DEFAULT_DATA;
+let layoutSaveTimer;
+let layoutSaveInFlight = Promise.resolve();
+let applyingDesktopBounds = false;
 let quitting = false;
 let refreshInFlight;
 let cliRefreshInFlight = false;
@@ -89,6 +112,65 @@ function heartbeatPath() { return path.join(app.getPath('userData'), HEARTBEAT_F
 function cliRefreshRequestDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'requests'); }
 function cliRefreshResponseDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses'); }
 function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
+function desktopLayoutPath() { return path.join(app.getPath('userData'), DESKTOP_LAYOUT_FILE); }
+
+function enabledProviderIds(data) {
+  const configured = data?.settings?.enabledProviders;
+  return Array.isArray(configured) ? configured.filter((id) => PROVIDER_IDS.includes(id)) : DEFAULT_DATA.settings.enabledProviders;
+}
+
+function normaliseDesktopLayout(input) {
+  const layout = input && typeof input === 'object' ? input : {};
+  const coordinate = (value) => Number.isFinite(value) ? Math.round(value) : null;
+  return {
+    ...DEFAULT_DESKTOP_LAYOUT,
+    ...layout,
+    version: DEFAULT_DESKTOP_LAYOUT.version,
+    x: coordinate(layout.x),
+    y: coordinate(layout.y),
+    cardWidth: Math.max(150, Math.min(360, Number(layout.cardWidth) || DEFAULT_DESKTOP_LAYOUT.cardWidth)),
+    desktopVisible: layout.desktopVisible !== false,
+    editing: layout.editing === true,
+    autoPosition: layout.autoPosition !== false,
+  };
+}
+
+async function loadDesktopLayout() {
+  try { desktopLayout = normaliseDesktopLayout(JSON.parse(await readFile(desktopLayoutPath(), 'utf8'))); }
+  catch { desktopLayout = { ...DEFAULT_DESKTOP_LAYOUT }; }
+  desktopLayout.editing = false;
+  return desktopLayout;
+}
+
+async function saveDesktopLayout() {
+  await writeJson(desktopLayoutPath(), { ...desktopLayout, editing: false });
+}
+
+function logDesktopLayoutSaveError(error) {
+  console.error(`AI Widgets: could not save desktop widget layout: ${error.message}`);
+}
+
+function scheduleDesktopLayoutSave() {
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = setTimeout(() => {
+    layoutSaveTimer = undefined;
+    queueDesktopLayoutSave().catch(logDesktopLayoutSaveError);
+  }, 150);
+}
+
+function queueDesktopLayoutSave() {
+  layoutSaveInFlight = layoutSaveInFlight.catch(() => {}).then(() => saveDesktopLayout());
+  return layoutSaveInFlight;
+}
+
+async function flushDesktopLayoutSave() {
+  if (layoutSaveTimer) {
+    clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = undefined;
+    queueDesktopLayoutSave();
+  }
+  await layoutSaveInFlight.catch(logDesktopLayoutSaveError);
+}
 
 async function fileExists(target) {
   try { await access(target, constants.F_OK); return true; } catch { return false; }
@@ -137,10 +219,200 @@ async function backgroundCollectorMayOwnSession() {
   } catch { return false; }
 }
 
+function isMacDesktopIntegration() { return process.platform === 'darwin'; }
+
+function widgetDimensions(data) {
+  const count = Math.max(1, enabledProviderIds(data).length);
+  return { width: (desktopLayout.cardWidth * count) + (MAC_WIDGET_SPACING * (count - 1)), height: MAC_WIDGET_HEIGHT };
+}
+
+function boundedWidgetPosition(bounds, display) {
+  const { workArea } = display;
+  const right = workArea.x + workArea.width - bounds.width - MAC_WIDGET_MARGIN;
+  const top = workArea.y + 18;
+  const maxX = Math.max(workArea.x, workArea.x + workArea.width - bounds.width);
+  const maxY = Math.max(workArea.y, workArea.y + workArea.height - bounds.height);
+  const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
+  if (desktopLayout.autoPosition || desktopLayout.x === null || desktopLayout.y === null) {
+    return { x: clamp(right, workArea.x, maxX), y: clamp(top, workArea.y, maxY) };
+  }
+  return {
+    x: clamp(desktopLayout.x, workArea.x, maxX),
+    y: clamp(desktopLayout.y, workArea.y, maxY),
+  };
+}
+
+function applyDesktopWidgetInteractivity() {
+  if (!desktopWidgetRef || desktopWidgetRef.isDestroyed()) return;
+  const editing = desktopLayout.editing === true;
+  desktopWidgetRef.setIgnoreMouseEvents(!editing, { forward: true });
+  desktopWidgetRef.setFocusable(editing);
+  desktopWidgetRef.setAlwaysOnTop(false);
+}
+
+function setDesktopWidgetBounds(data) {
+  if (!desktopWidgetRef || desktopWidgetRef.isDestroyed()) return;
+  const dimensions = widgetDimensions(data);
+  const display = desktopLayout.autoPosition || desktopLayout.x === null || desktopLayout.y === null
+    ? screen.getPrimaryDisplay()
+    : screen.getDisplayNearestPoint({ x: desktopLayout.x, y: desktopLayout.y });
+  const position = boundedWidgetPosition(dimensions, display);
+  applyingDesktopBounds = true;
+  desktopWidgetRef.setBounds({ ...position, ...dimensions });
+  applyingDesktopBounds = false;
+}
+
+async function desktopWidgetState() {
+  return { data: await readData(), layout: { ...desktopLayout } };
+}
+
+async function refreshNativeWidgets() {
+  if (!isMacDesktopIntegration()) return;
+  const state = await desktopWidgetState();
+  desktopWidgetData = state.data;
+  if (desktopWidgetRef && !desktopWidgetRef.isDestroyed()) {
+    setDesktopWidgetBounds(state.data);
+    applyDesktopWidgetInteractivity();
+    // Calling showInactive() on every data refresh asks macOS to order this
+    // normal-level window again. That made the cards resurface above the app
+    // the user was working in once per refresh interval. Only order it in
+    // when it was explicitly hidden (or during initial creation).
+    if (desktopLayout.desktopVisible) {
+      if (!desktopWidgetRef.isVisible()) desktopWidgetRef.showInactive();
+    } else if (desktopWidgetRef.isVisible()) {
+      desktopWidgetRef.hide();
+    }
+    desktopWidgetRef.webContents.send('desktop-widget:state', state);
+  }
+  if (trayPopoverRef && !trayPopoverRef.isDestroyed()) trayPopoverRef.webContents.send('desktop-widget:state', state);
+}
+
+async function setDesktopLayout(patch) {
+  desktopLayout = normaliseDesktopLayout({ ...desktopLayout, ...patch });
+  // Panel actions may race a pending drag/resize debounce. Cancel that timer
+  // and use the same serialized writer so the latest layout is the one that
+  // reaches disk.
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = undefined;
+  await queueDesktopLayoutSave().catch((error) => {
+    logDesktopLayoutSaveError(error);
+    throw error;
+  });
+  await refreshNativeWidgets();
+  return { ...desktopLayout };
+}
+
+async function adjustDesktopWidgetWidth(change) {
+  const delta = Number(change);
+  if (!Number.isFinite(delta)) return { ...desktopLayout };
+  desktopLayout = normaliseDesktopLayout({ ...desktopLayout, cardWidth: desktopLayout.cardWidth + delta });
+  // Wheel events arrive in bursts. Resize the visible window immediately, but
+  // defer the disk write just as we do while dragging the cards.
+  scheduleDesktopLayoutSave();
+  setDesktopWidgetBounds(desktopWidgetData);
+  return { ...desktopLayout };
+}
+
+function createDesktopWidget() {
+  if (!isMacDesktopIntegration()) return null;
+  if (desktopWidgetRef && !desktopWidgetRef.isDestroyed()) return desktopWidgetRef;
+  const dimensions = widgetDimensions({ settings: DEFAULT_DATA.settings });
+  const position = boundedWidgetPosition(dimensions, screen.getPrimaryDisplay());
+  desktopWidgetRef = new BrowserWindow({
+    ...position, ...dimensions, frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
+    resizable: false, minimizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, show: false,
+    webPreferences: { preload: path.join(import.meta.dirname, 'widget-preload.cjs'), contextIsolation: true, nodeIntegration: false },
+  });
+  desktopWidgetRef.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
+  desktopWidgetRef.on('move', () => {
+    if (applyingDesktopBounds || desktopLayout.editing !== true) return;
+    const { x, y } = desktopWidgetRef.getBounds();
+    desktopLayout = normaliseDesktopLayout({ ...desktopLayout, x, y, autoPosition: false });
+    scheduleDesktopLayoutSave();
+  });
+  desktopWidgetRef.on('closed', () => { desktopWidgetRef = undefined; });
+  desktopWidgetRef.webContents.once('did-finish-load', () => { refreshNativeWidgets().catch(() => {}); });
+  desktopWidgetRef.loadFile(path.join(import.meta.dirname, 'widget.html'), { query: { surface: 'desktop' } })
+    .catch((error) => console.error(`AI Widgets: could not load desktop cards: ${error.message}`));
+  return desktopWidgetRef;
+}
+
+function trayPopoverBounds() {
+  const display = screen.getDisplayNearestPoint(trayRef?.getBounds() || screen.getCursorScreenPoint());
+  const { workArea } = display;
+  const height = Math.min(720, workArea.height - 24);
+  const trayBounds = trayRef?.getBounds();
+  const requestedX = trayBounds ? trayBounds.x + trayBounds.width - MAC_PANEL_WIDTH : workArea.x + workArea.width - MAC_PANEL_WIDTH - 8;
+  const requestedY = trayBounds ? trayBounds.y + trayBounds.height + 4 : workArea.y + 4;
+  return {
+    x: Math.max(workArea.x + 8, Math.min(requestedX, workArea.x + workArea.width - MAC_PANEL_WIDTH - 8)),
+    y: Math.max(workArea.y + 4, Math.min(requestedY, workArea.y + workArea.height - height - 8)),
+    width: MAC_PANEL_WIDTH, height,
+  };
+}
+
+function createTrayPopover() {
+  if (trayPopoverRef && !trayPopoverRef.isDestroyed()) return trayPopoverRef;
+  trayPopoverRef = new BrowserWindow({
+    ...trayPopoverBounds(), frame: false, transparent: true, backgroundColor: '#00000000', hasShadow: true,
+    resizable: false, minimizable: false, maximizable: false, fullscreenable: false, skipTaskbar: true, show: false,
+    vibrancy: 'popover', visualEffectState: 'active',
+    webPreferences: { preload: path.join(import.meta.dirname, 'widget-preload.cjs'), contextIsolation: true, nodeIntegration: false },
+  });
+  trayPopoverRef.setAlwaysOnTop(true, 'pop-up-menu');
+  trayPopoverRef.on('blur', () => trayPopoverRef?.hide());
+  trayPopoverRef.on('closed', () => { trayPopoverRef = undefined; });
+  trayPopoverRef.loadFile(path.join(import.meta.dirname, 'widget.html'), { query: { surface: 'panel' } })
+    .catch((error) => console.error(`AI Widgets: could not load menu-bar panel: ${error.message}`));
+  return trayPopoverRef;
+}
+
+async function toggleTrayPopover() {
+  const popup = createTrayPopover();
+  if (popup.isVisible()) { popup.hide(); return; }
+  const state = await desktopWidgetState();
+  popup.setBounds(trayPopoverBounds());
+  popup.show();
+  popup.focus();
+  popup.webContents.send('desktop-widget:state', state);
+}
+
+function createMenuBarItem() {
+  if (!isMacDesktopIntegration() || trayRef) return;
+  const icon = nativeImage.createFromPath(path.join(import.meta.dirname, '..', 'imgs', 'menu-bar-iconTemplate.svg')).resize({ width: 18, height: 18 });
+  icon.setTemplateImage(true);
+  trayRef = new Tray(icon);
+  trayRef.setTitle('AI');
+  trayRef.setToolTip('AI Widgets');
+  trayRef.on('click', () => { toggleTrayPopover().catch(() => {}); });
+}
+
+async function initialiseMacDesktopIntegration() {
+  if (!isMacDesktopIntegration()) return;
+  await loadDesktopLayout();
+  createMenuBarItem();
+  createDesktopWidget();
+  await refreshNativeWidgets();
+}
+
+async function destroyMacDesktopIntegration() {
+  await flushDesktopLayoutSave();
+  desktopWidgetRef?.destroy();
+  trayPopoverRef?.destroy();
+  trayRef?.destroy();
+  desktopWidgetRef = trayPopoverRef = trayRef = undefined;
+}
+
+function notifyUsageChanged() {
+  windowRef?.webContents.send('usage:changed');
+  refreshNativeWidgets().catch(() => {});
+}
+
 async function requestQuit() {
   if (quitting) return;
   quitting = true;
   await setRuntimeActive(false).catch(() => {});
+  await destroyMacDesktopIntegration().catch(() => {});
   app.quit();
 }
 
@@ -255,7 +527,7 @@ async function saveEnabledProviders(ids) {
   data.settings.enabledProviders = ids.filter((id) => Object.hasOwn(PROVIDERS, id));
   data.updatedAt = new Date().toISOString();
   await writeJson(await ensureDataFile(), data);
-  windowRef?.webContents.send('usage:changed');
+  notifyUsageChanged();
   if (data.settings.enabledProviders.includes('copilot')) refreshProvider('copilot').catch(() => {});
   return data;
 }
@@ -353,7 +625,7 @@ async function applyGitHubCopilotUsage() {
   provider.note = `Synced from GitHub Billing API (GitHub ${parsed.plan === 'free' ? 'Free' : parsed.plan}).`;
   data.updatedAt = new Date().toISOString();
   await writeJson(target, data);
-  windowRef?.webContents.send('usage:changed');
+  notifyUsageChanged();
   return parsed;
 }
 
@@ -502,7 +774,7 @@ async function applyCollectedUsage(providerId, text, source = 'default') {
   provider.note = parsed.note;
   data.updatedAt = new Date().toISOString();
   await writeJson(target, data);
-  windowRef?.webContents.send('usage:changed');
+  notifyUsageChanged();
   return { accepted: true, session: parsed.session?.available ?? null, weekly: parsed.weekly?.available ?? null, monthly: parsed.monthly?.available ?? null };
 }
 
@@ -766,6 +1038,7 @@ app.whenReady().then(async () => {
   await ensureDataFile(); await readCollector(); await setRuntimeActive(true); await setRuntimeHeartbeat();
   await ensureCliRefreshDirectories();
   await pruneCliRefreshResponses();
+  await initialiseMacDesktopIntegration();
   refreshAllProviders().catch(() => {});
   setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
   setInterval(() => { setRuntimeHeartbeat().catch(() => {}); }, 5_000);
@@ -783,10 +1056,11 @@ app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: process.platform !== 'linux' });
   if (openSettingsOnStart) showControlCenter();
 });
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   if (usageCliRequested) return;
-  quitting = true;
-  setRuntimeActive(false).catch(() => {});
+  if (quitting) return;
+  event.preventDefault();
+  requestQuit().catch(() => {});
 });
 app.on('activate', showControlCenter);
 
@@ -798,3 +1072,11 @@ ipcMain.handle('collector:save-page', (_event, providerId, source) => PROVIDERS[
 ipcMain.handle('collector:refresh', refreshAllProviders);
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());
+ipcMain.handle('desktop-widget:state', desktopWidgetState);
+ipcMain.handle('desktop-widget:refresh', async () => { await refreshAllProviders(); return desktopWidgetState(); });
+ipcMain.handle('desktop-widget:toggle-visible', () => setDesktopLayout({ desktopVisible: !desktopLayout.desktopVisible }));
+ipcMain.handle('desktop-widget:set-editing', (_event, editing) => setDesktopLayout({ editing: Boolean(editing), desktopVisible: true }));
+ipcMain.handle('desktop-widget:anchor', () => setDesktopLayout({ autoPosition: true, x: null, y: null }));
+ipcMain.handle('desktop-widget:resize', (_event, delta) => adjustDesktopWidgetWidth(delta));
+ipcMain.handle('desktop-widget:open-settings', () => { trayPopoverRef?.hide(); showControlCenter(); });
+ipcMain.handle('desktop-widget:exit', requestQuit);

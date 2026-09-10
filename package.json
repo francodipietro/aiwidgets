@@ -13,7 +13,7 @@
     "dev:linux": "electron --no-sandbox . --dev",
     "usage": "electron . usage",
     "usage:linux": "electron --no-sandbox . usage",
-    "check": "node --check src/main.js && node --check src/usage-cli.mjs && node --check src/preload.cjs && node --check src/renderer.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
+    "check": "node --check src/main.js && node --check src/usage-cli.mjs && node --check src/preload.cjs && node --check src/renderer.js && node --check src/widget-preload.cjs && node --check src/widget.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
     "package:linux": "electron-builder --linux AppImage && node scripts/package-deb.mjs",
     "package:gnome": "cd gnome-extension/aiwidgets@fdipietro.dev && rm -f ../../dist/aiwidgets-gnome-shell.zip && zip -j ../../dist/aiwidgets-gnome-shell.zip metadata.json extension.js stylesheet.css ../../imgs/logo_chatgpt.svg ../../imgs/logo_claude.svg ../../imgs/logo_copilot.png",
     "package:mac": "electron-builder --mac dmg zip"
@@ -36,11 +36,19 @@
     },
     "mac": {
       "category": "public.app-category.utilities",
+      "icon": "imgs/logo_app.svg",
       "target": ["dmg", "zip"]
     }
   },
   "devDependencies": {
     "electron": "^39.0.0",
     "electron-builder": "^26.0.0"
+  },
+  "overrides": {
+    "yauzl": "^3.3.1"
+  },
+  "allowScripts": {
+    "electron@39.8.10": true,
+    "electron-winstaller@5.4.0": true
   }
 }

@@ -543,6 +543,20 @@ function nextMonthlyResetLabel() {
   return `Resets ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(next)} at 12:00 AM UTC`;
 }
 
+function cliEnvironment() {
+  // Apps launched by Finder receive a minimal PATH, unlike terminals. Include
+  // the standard Homebrew locations so an installed GitHub CLI is available
+  // to the packaged macOS app too.
+  const directories = [
+    ...(process.env.PATH || '').split(path.delimiter),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+  ].filter(Boolean);
+  return { ...process.env, PATH: [...new Set(directories)].join(path.delimiter) };
+}
+
 async function githubApi(endpoint) {
   let result;
   try {
@@ -550,8 +564,10 @@ async function githubApi(endpoint) {
       timeout: 20_000,
       maxBuffer: 2 * 1024 * 1024,
       windowsHide: true,
+      env: cliEnvironment(),
     });
   } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('GitHub CLI (`gh`) was not found. Install it, then restart AI Widgets.');
     const detail = String(error.stderr || error.message || '').trim().replace(/\s+/g, ' ');
     throw new Error(detail || 'GitHub CLI could not read Billing API.');
   }

@@ -480,6 +480,11 @@ function sourceStartUrl(providerId, source = 'default') {
   return PROVIDERS[providerId].startUrls?.[source] || PROVIDERS[providerId].startUrl;
 }
 
+function normaliseProviderSource(providerId, source) {
+  if (providerId === 'copilot') return source === 'actions' ? 'actions' : 'premium';
+  return 'default';
+}
+
 function sourceUrl(providerId, source, entry) {
   if (!entry.url) return sourceStartUrl(providerId, source);
   try {
@@ -788,6 +793,7 @@ async function autoConnectCopilot(win) {
       scheduleProviderRetry(key, () => autoConnectCopilot(win));
       return;
     }
+    clearProviderRetry(key);
     await enableProvider('copilot');
     let config = await readCollector();
     Object.assign(collectorEntry(config, 'copilot', 'premium'), { configured: true, url: win.webContents.getURL(), status: 'Copilot usage connected and updated automatically.', lastSync: new Date().toISOString() });
@@ -833,6 +839,7 @@ async function autoConnectProvider(providerId, source, win) {
     const config = await readCollector();
     const entry = collectorEntry(config, providerId, source);
     if (result.accepted) {
+      clearProviderRetry(key);
       await enableProvider(providerId);
       Object.assign(entry, {
         configured: true,
@@ -868,7 +875,10 @@ function createProviderWindow(providerId, show, source = 'default') {
   // OAuth often opens a popup. Keep the login in the tracked persistent
   // window so the usage page can be detected immediately after authorization.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    win.loadURL(url).catch(() => {});
+    try {
+      const destination = new URL(url);
+      if (destination.protocol === 'https:') win.loadURL(destination.href).catch(() => {});
+    } catch { /* Ignore malformed popup destinations. */ }
     return { action: 'deny' };
   });
   win.webContents.on('did-finish-load', () => { autoConnectProvider(providerId, source, win).catch(() => {}); });
@@ -1088,7 +1098,9 @@ app.on('activate', showControlCenter);
 ipcMain.handle('usage:read', readData);
 ipcMain.handle('providers:save-enabled', (_event, ids) => saveEnabledProviders(ids));
 ipcMain.handle('collector:info', readCollector);
-ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_IDS.includes(providerId) ? openProvider(providerId, source || (providerId === 'copilot' ? 'premium' : 'default')) : Promise.reject(new Error('Invalid page provider.')));
+ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_IDS.includes(providerId)
+  ? openProvider(providerId, normaliseProviderSource(providerId, source))
+  : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.handle('collector:refresh', refreshAllProviders);
 ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());

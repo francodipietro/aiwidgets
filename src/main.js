@@ -285,7 +285,12 @@ async function refreshNativeWidgets() {
 
 async function setDesktopLayout(patch) {
   desktopLayout = normaliseDesktopLayout({ ...desktopLayout, ...patch });
-  await saveDesktopLayout();
+  // Panel actions may race a pending drag/resize debounce. Cancel that timer
+  // and use the same serialized writer so the latest layout is the one that
+  // reaches disk.
+  clearTimeout(layoutSaveTimer);
+  layoutSaveTimer = undefined;
+  await queueDesktopLayoutSave();
   await refreshNativeWidgets();
   return { ...desktopLayout };
 }

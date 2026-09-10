@@ -6,10 +6,13 @@ let timer;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const percentage = (usage) => usage ? Math.round(usage.available) : null;
+const resetTimestamp = (label) => Date.parse(String(label)
+  .replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '')
+  .replace(/\s+at\s+/ig, ' '));
 const resetText = (usage) => {
   const label = usage?.resetLabel;
   if (label) {
-    const timestamp = Date.parse(label.replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, ''));
+    const timestamp = resetTimestamp(label);
     if (!Number.isFinite(timestamp) || timestamp >= Date.now() - 60_000) return label;
   }
   if (usage?.resetsAt) {

@@ -547,6 +547,7 @@ function cliEnvironment() {
   // Apps launched by Finder receive a minimal PATH, unlike terminals. Include
   // the standard Homebrew locations so an installed GitHub CLI is available
   // to the packaged macOS app too.
+  if (process.platform !== 'darwin') return process.env;
   const directories = [
     ...(process.env.PATH || '').split(path.delimiter),
     '/opt/homebrew/bin',
@@ -679,7 +680,9 @@ function resetNearValue(text, valueIndex, nextValueIndex) {
   // it instead of presenting it as the next reset.
   const current = Date.now();
   const upcoming = candidates.filter((candidate) => {
-    const dateText = candidate.text.replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '');
+    const dateText = candidate.text
+      .replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '')
+      .replace(/\s+at\s+/ig, ' ');
     const timestamp = Date.parse(dateText);
     return !Number.isFinite(timestamp) || timestamp >= current - 60_000;
   });

@@ -6,11 +6,14 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => 
 const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id === 'copilot' ? '../imgs/logo_copilot.png' : '../imgs/logo_chatgpt.svg';
 const providerName = (id) => id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : 'Codex';
 const formatNumber = (value) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
+const resetTimestamp = (label) => Date.parse(String(label)
+  .replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '')
+  .replace(/\s+at\s+/ig, ' '));
 
 function resetText(usage) {
   const label = usage?.resetLabel;
   if (label) {
-    const timestamp = Date.parse(label.replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, ''));
+    const timestamp = resetTimestamp(label);
     if (!Number.isFinite(timestamp) || timestamp >= Date.now() - 60_000) return label;
   }
   if (usage?.resetsAt) {

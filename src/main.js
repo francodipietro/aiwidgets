@@ -2,14 +2,11 @@ import electron from 'electron';
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { promisify } from 'node:util';
 import { runUsageCli } from './usage-cli.mjs';
 
 const { app, BrowserWindow, ipcMain, nativeImage, screen, Tray } = electron;
-const execFileAsync = promisify(execFile);
 const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
@@ -22,15 +19,18 @@ const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab]
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
-  claude: { name: 'Claude', startUrl: 'https://claude.ai/settings' },
+  claude: { name: 'Claude', startUrl: 'https://claude.ai/settings/usage' },
   copilot: {
     name: 'GitHub Copilot',
-    startUrl: 'https://github.com/settings/billing',
+    // GitHub's login endpoint currently normalizes a nested billing return
+    // URL to the Billing overview. The collector redirects from there to the
+    // analytics page once the signed-in session is established.
+    startUrl: 'https://github.com/login?return_to=%2Fsettings%2Fbilling',
     startUrls: {
       premium: 'https://github.com/settings/billing/premium_requests_usage',
-      actions: 'https://github.com/settings/billing',
+      actions: 'https://github.com/login?return_to=%2Fsettings%2Fbilling',
     },
-  }
+  },
 };
 const DEFAULT_DATA = {
   settings: { refreshMinutes: 1, enabledProviders: ['claude', 'codex'] },
@@ -50,18 +50,11 @@ const DEFAULT_DESKTOP_LAYOUT = {
   autoPosition: true,
 };
 const PROVIDER_IDS = ['claude', 'codex', 'copilot'];
+const PAGE_PROVIDER_IDS = ['claude', 'codex', 'copilot'];
 const MAC_WIDGET_SPACING = 20;
 const MAC_WIDGET_MARGIN = 28;
 const MAC_WIDGET_HEIGHT = 286;
 const MAC_PANEL_WIDTH = 318;
-
-// GitHub's Billing API returns Actions costs per runner SKU. The dashboard's
-// included-minutes meter uses Linux-equivalent minutes, whose published base
-// rate is $0.006/minute. Premium requests are an annual Copilot Pro allowance
-// for this account; the REST report exposes usage but not that entitlement.
-const ACTIONS_LINUX_MINUTE_RATE = 0.006;
-const ACTIONS_INCLUDED_BY_GITHUB_PLAN = { free: 2000, pro: 3000 };
-const COPILOT_PREMIUM_INCLUDED = 300;
 
 let windowRef;
 let desktopWidgetRef;
@@ -75,6 +68,8 @@ let applyingDesktopBounds = false;
 let quitting = false;
 let refreshInFlight;
 let cliRefreshInFlight = false;
+const providerConnectionInFlight = new Set();
+const providerRetryTimers = new Map();
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
 // extension remains the separate compact usage view in the top panel.
@@ -82,6 +77,21 @@ const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
 const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
+
+function clearProviderRetry(key) {
+  const timer = providerRetryTimers.get(key);
+  if (timer) clearTimeout(timer);
+  providerRetryTimers.delete(key);
+}
+
+function scheduleProviderRetry(key, callback) {
+  if (providerRetryTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    providerRetryTimers.delete(key);
+    callback().catch(() => {});
+  }, 3000);
+  providerRetryTimers.set(key, timer);
+}
 
 // The usage command only extracts text from hidden pages. Disable unused GPU
 // paths so a terminal invocation does not emit VA-API/WebGL diagnostics.
@@ -408,6 +418,10 @@ function notifyUsageChanged() {
   refreshNativeWidgets().catch(() => {});
 }
 
+function notifyCollectorChanged() {
+  windowRef?.webContents.send('collector:changed');
+}
+
 async function requestQuit() {
   if (quitting) return;
   quitting = true;
@@ -466,12 +480,17 @@ function sourceStartUrl(providerId, source = 'default') {
   return PROVIDERS[providerId].startUrls?.[source] || PROVIDERS[providerId].startUrl;
 }
 
+function normaliseProviderSource(providerId, source) {
+  if (providerId === 'copilot') return source === 'actions' ? 'actions' : 'premium';
+  return 'default';
+}
+
 function sourceUrl(providerId, source, entry) {
   if (!entry.url) return sourceStartUrl(providerId, source);
   try {
     const saved = new URL(entry.url);
-    // Builds before 0.4.15 stored the generic overview as the Premium source.
-    // It has no percentage, so replace that stale configuration automatically.
+    // Older connections saved the Billing overview. Its Copilot section only
+    // contains spend, whereas the analytics view exposes the included quota.
     if (providerId === 'copilot' && source === 'premium' && saved.pathname === '/settings/billing') return sourceStartUrl(providerId, source);
   } catch { return sourceStartUrl(providerId, source); }
   return entry.url;
@@ -532,118 +551,14 @@ async function saveEnabledProviders(ids) {
   return data;
 }
 
-function githubBillingPeriod() {
-  const now = new Date();
-  return { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
-}
-
-function nextMonthlyResetLabel() {
-  const now = new Date();
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return `Resets ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(next)} at 12:00 AM UTC`;
-}
-
-function cliEnvironment() {
-  // Apps launched by Finder receive a minimal PATH, unlike terminals. Include
-  // the standard Homebrew locations so an installed GitHub CLI is available
-  // to the packaged macOS app too.
-  if (process.platform !== 'darwin') return process.env;
-  const directories = [
-    ...(process.env.PATH || '').split(path.delimiter),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-  ].filter(Boolean);
-  return { ...process.env, PATH: [...new Set(directories)].join(path.delimiter) };
-}
-
-async function githubApi(endpoint) {
-  let result;
-  try {
-    result = await execFileAsync('gh', ['api', '-H', 'X-GitHub-Api-Version: 2026-03-10', endpoint], {
-      timeout: 20_000,
-      maxBuffer: 2 * 1024 * 1024,
-      windowsHide: true,
-      env: cliEnvironment(),
-    });
-  } catch (error) {
-    if (error.code === 'ENOENT') throw new Error('GitHub CLI (`gh`) was not found. Install it, then restart AI Widgets.');
-    const detail = String(error.stderr || error.message || '').trim().replace(/\s+/g, ' ');
-    throw new Error(detail || 'GitHub CLI could not read Billing API.');
-  }
-  try { return JSON.parse(result.stdout); }
-  catch { throw new Error('GitHub Billing API returned invalid JSON.'); }
-}
-
-function monthlyQuantity(items, product, unitType) {
-  return items
-    .filter((item) => String(item?.product || '').toLowerCase() === product && String(item?.unitType || '').toLowerCase() === unitType)
-    .reduce((sum, item) => sum + Number(item.grossQuantity || 0), 0);
-}
-
-function monthlyAmount(items, product, unitType, field) {
-  return items
-    .filter((item) => String(item?.product || '').toLowerCase() === product && String(item?.unitType || '').toLowerCase() === unitType)
-    .reduce((sum, item) => sum + Number(item[field] || 0), 0);
-}
-
-async function readGitHubCopilotUsage() {
-  const { year, month } = githubBillingPeriod();
-  const query = `?year=${year}&month=${month}`;
-  const profile = await githubApi('user');
-  const login = String(profile?.login || '');
-  if (!login) throw new Error('GitHub CLI did not return the authenticated account.');
-  const [premiumReport, summary] = await Promise.all([
-    githubApi(`users/${encodeURIComponent(login)}/settings/billing/premium_request/usage${query}`),
-    githubApi(`users/${encodeURIComponent(login)}/settings/billing/usage/summary${query}`),
-  ]);
-  return githubCopilotUsageFromReports(profile, premiumReport, summary);
-}
-
-function githubCopilotUsageFromReports(profile, premiumReport, summary) {
-  const premiumItems = Array.isArray(premiumReport?.usageItems) ? premiumReport.usageItems : [];
-  const summaryItems = Array.isArray(summary?.usageItems) ? summary.usageItems : [];
-  const premiumUsed = monthlyQuantity(premiumItems, 'copilot', 'requests');
-  const githubPlan = String(profile?.plan?.name || '').toLowerCase();
-  const actionsIncluded = ACTIONS_INCLUDED_BY_GITHUB_PLAN[githubPlan];
-  if (!Number.isFinite(premiumUsed) || !actionsIncluded) {
-    throw new Error(`GitHub plan ${githubPlan || 'unknown'} has no configured included-minutes allowance.`);
-  }
-  const actionsGross = monthlyAmount(summaryItems, 'actions', 'minutes', 'grossAmount');
-  const actionsBilled = monthlyAmount(summaryItems, 'actions', 'minutes', 'netAmount');
-  const actionsUsed = actionsGross / ACTIONS_LINUX_MINUTE_RATE;
-  return {
-    monthly: {
-      available: Math.max(0, Math.min(100, 100 - (premiumUsed / COPILOT_PREMIUM_INCLUDED * 100))),
-      used: premiumUsed,
-      included: COPILOT_PREMIUM_INCLUDED,
-      label: 'Premium requests',
-      resetLabel: nextMonthlyResetLabel(),
-    },
-    actionsMinutes: {
-      available: Math.max(0, Math.min(100, 100 - (actionsUsed / actionsIncluded * 100))),
-      used: actionsUsed,
-      included: actionsIncluded,
-      billedAmount: actionsBilled,
-      resetLabel: nextMonthlyResetLabel(),
-    },
-    plan: githubPlan,
-  };
-}
-
-async function applyGitHubCopilotUsage() {
-  const parsed = await readGitHubCopilotUsage();
-  const target = await ensureDataFile();
+async function enableProvider(providerId) {
   const data = await readData();
-  const provider = data.providers.find((item) => item.id === 'copilot');
-  provider.monthly = parsed.monthly;
-  provider.actionsMinutes = parsed.actionsMinutes;
-  provider.note = `Synced from GitHub Billing API (GitHub ${parsed.plan === 'free' ? 'Free' : parsed.plan}).`;
+  if (data.settings.enabledProviders.includes(providerId)) return data;
+  data.settings.enabledProviders.push(providerId);
   data.updatedAt = new Date().toISOString();
-  await writeJson(target, data);
+  await writeJson(await ensureDataFile(), data);
   notifyUsageChanged();
-  return parsed;
+  return data;
 }
 
 const SESSION_LABELS = [/\b5[-\s]*(?:h|hour(?:s)?)\s+usage\s+limit\b/ig, /\bcurrent\s+session\b/ig, /\bsession\s*\(\s*5\s*h(?:r)?\s*\)/ig];
@@ -711,10 +626,10 @@ function parseVisibleUsage(providerId, text, source = 'default') {
   if (providerId === 'copilot') {
     if (source === 'actions') {
       const actionsMinutes = findActionsUsage(text);
-      return actionsMinutes ? { actionsMinutes, note: 'Synced Actions minutes from GitHub Copilot billing with AI Widgets.' } : null;
+      return actionsMinutes ? { actionsMinutes, note: 'Synced Actions minutes from GitHub billing with AI Widgets.' } : null;
     }
-    const premium = findCopilotUsage(text);
-    return premium ? { monthly: premium, note: 'Synced Premium requests from GitHub Copilot with AI Widgets.' } : null;
+    const monthly = findCopilotUsage(text);
+    return monthly ? { monthly, note: `Synced ${monthly.label || 'Copilot usage'} from GitHub billing with AI Widgets.` } : null;
   }
   const session = findUsage(text, SESSION_LABELS);
   const weekly = findUsage(text, WEEKLY_LABELS);
@@ -731,38 +646,38 @@ function parseVisibleUsage(providerId, text, source = 'default') {
 const creditNumber = (value) => Number(String(value).replace(/,/g, ''));
 
 function findCopilotUsage(text) {
-  const premiumPercentage = findUsage(text, [/\bpremium\s+requests?\b/ig]);
-  if (premiumPercentage) return { ...premiumPercentage, label: 'Premium requests' };
+  const percentage = findUsage(text, [/\bpremium\s+requests?\b/ig]);
+  if (percentage) return { ...percentage, label: 'Premium requests' };
   const premiumPatterns = [
     /(\d[\d,.]*)\s*(?:\/|of)\s*(\d[\d,.]*)\s*(?:premium\s+)?requests?\b/ig,
     /(\d[\d,.]*)\s*(?:premium\s+)?requests?\s+used\s*(?:out\s+of|of)\s*(\d[\d,.]*)/ig,
+    /included\s+premium\s+requests?\s+consumed\s*(\d[\d,.]*)\s+of\s*(\d[\d,.]*)\s+included/ig,
   ];
-  for (const pattern of premiumPatterns) {
-    const match = pattern.exec(text);
-    if (!match) continue;
-    const used = creditNumber(match[1]);
-    const included = creditNumber(match[2]);
-    if (Number.isFinite(used) && Number.isFinite(included) && included > 0 && used >= 0) {
-      return { available: Math.max(0, Math.min(100, 100 - (used / included * 100))), resetLabel: 'Resets on the first day of next month', label: 'Premium requests' };
+  const usageFromPatterns = (patterns, label) => {
+    for (const pattern of patterns) {
+      const match = pattern.exec(text);
+      if (!match) continue;
+      const used = creditNumber(match[1]);
+      const included = creditNumber(match[2]);
+      if (Number.isFinite(used) && Number.isFinite(included) && included > 0 && used >= 0) {
+        return { available: Math.max(0, Math.min(100, 100 - (used / included * 100))), used, included, resetLabel: 'Resets on the first day of next month', label };
+      }
     }
-  }
-  const patterns = [
+    return null;
+  };
+  const premium = usageFromPatterns(premiumPatterns, 'Premium requests');
+  if (premium) return premium;
+  // GitHub is transitioning eligible Copilot plans from the legacy Premium
+  // requests meter to AI credits. Accept either presentation so connecting an
+  // account remains a one-login flow regardless of its billing model.
+  const creditPatterns = [
     /(\d[\d,.]*)\s*(?:\/|of)\s*(\d[\d,.]*)\s*(?:included\s+)?AI\s+credits?\s+used/ig,
     /(\d[\d,.]*)\s*AI\s+credits?\s+used\s*(?:out\s+of|of)\s*(\d[\d,.]*)/ig,
     /AI\s+credits?\s+used\s*[:\-]?\s*(\d[\d,.]*)\s*(?:\/|of)\s*(\d[\d,.]*)/ig,
     /(?:included\s+)?AI\s+credits?\s*[:\-]?\s*(\d[\d,.]*)\s*(?:\/|of)\s*(\d[\d,.]*)/ig,
     /(\d[\d,.]*)\s*(?:\/|of)\s*(\d[\d,.]*)\s*credits?\b/ig,
   ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(text);
-    if (!match) continue;
-    const used = creditNumber(match[1]);
-    const included = creditNumber(match[2]);
-    if (Number.isFinite(used) && Number.isFinite(included) && included > 0 && used >= 0) {
-      return { available: Math.max(0, Math.min(100, 100 - (used / included * 100))), resetLabel: 'Resets on the first day of next month', label: 'AI credits' };
-    }
-  }
-  return null;
+  return usageFromPatterns(creditPatterns, 'AI credits');
 }
 
 function findActionsUsage(text) {
@@ -779,11 +694,8 @@ function findActionsUsage(text) {
     const billed = text.match(/\bbillable\s+usage\s*\$?\s*([\d,.]+)/i);
     const billedAmount = billed ? creditNumber(billed[1]) : null;
     return {
-      available: Math.max(0, Math.min(100, 100 - (used / included * 100))),
-      used,
-      included,
-      ...(Number.isFinite(billedAmount) ? { billedAmount } : {}),
-      resetLabel: resetNearValue(text, match.index),
+      available: Math.max(0, Math.min(100, 100 - (used / included * 100))), used, included,
+      ...(Number.isFinite(billedAmount) ? { billedAmount } : {}), resetLabel: resetNearValue(text, match.index),
     };
   }
   return null;
@@ -791,13 +703,13 @@ function findActionsUsage(text) {
 
 async function applyCollectedUsage(providerId, text, source = 'default') {
   const parsed = parseVisibleUsage(providerId, text, source);
-  if (!parsed) return { accepted: false, reason: providerId === 'copilot' && source === 'actions' ? 'No Actions minutes usage was found on the saved page.' : providerId === 'copilot' ? 'No Premium requests usage was found on the saved page.' : 'No session or weekly percentage was found on the saved page.' };
+  if (!parsed) return { accepted: false, reason: providerId === 'copilot' && source === 'actions' ? 'No Actions minutes usage was found yet.' : providerId === 'copilot' ? 'No Copilot usage was found yet.' : 'No session or weekly percentage was found on the usage page.' };
   const target = await ensureDataFile();
   const data = await readData();
   const provider = data.providers.find((item) => item.id === providerId);
   if (parsed.session) provider.session = { available: parsed.session.available, resetsAt: null, resetLabel: parsed.session.resetLabel || null };
   if (parsed.weekly) provider.weekly = { available: parsed.weekly.available, resetsAt: null, resetLabel: parsed.weekly.resetLabel || null };
-  if (parsed.monthly) provider.monthly = { available: parsed.monthly.available, resetsAt: null, resetLabel: parsed.monthly.resetLabel || null, label: parsed.monthly.label || provider.monthly?.label || null };
+  if (parsed.monthly) provider.monthly = { available: parsed.monthly.available, resetsAt: null, resetLabel: parsed.monthly.resetLabel || null, label: parsed.monthly.label || 'Premium requests', ...(Number.isFinite(parsed.monthly.used) ? { used: parsed.monthly.used } : {}), ...(Number.isFinite(parsed.monthly.included) ? { included: parsed.monthly.included } : {}) };
   if (parsed.actionsMinutes) provider.actionsMinutes = parsed.actionsMinutes;
   provider.note = parsed.note;
   data.updatedAt = new Date().toISOString();
@@ -821,30 +733,134 @@ async function extractSettledUsageText(providerId, webContents, source = 'defaul
   return latest;
 }
 
-function isAllowedUsageUrl(providerId, value) {
+function isProviderOrigin(providerId, value) {
   try {
     const url = new URL(value);
-    if (providerId === 'codex') return url.hostname === 'chatgpt.com' && (url.pathname.startsWith('/codex') || url.pathname.startsWith('/settings'));
-    if (providerId === 'copilot') return url.hostname === 'github.com' && url.pathname.startsWith('/settings/billing');
+    if (providerId === 'codex') return url.hostname === 'chatgpt.com';
+    if (providerId === 'claude') return url.hostname === 'claude.ai' || url.hostname === 'www.claude.ai';
+    if (providerId === 'copilot') return url.hostname === 'github.com';
+    return false;
+  } catch { return false; }
+}
+
+function isCanonicalUsageUrl(providerId, value) {
+  try {
+    const url = new URL(value);
+    if (providerId === 'codex') return url.hostname === 'chatgpt.com' && (
+      url.pathname.startsWith('/codex/settings/usage') ||
+      url.pathname.startsWith('/codex/cloud/settings/analytics')
+    );
+    if (providerId === 'copilot') return url.hostname === 'github.com' && url.pathname.startsWith('/settings/billing/premium_requests_usage');
     return (url.hostname === 'claude.ai' || url.hostname === 'www.claude.ai') &&
-      (url.pathname.startsWith('/settings') || url.hash.startsWith('#settings/usage'));
+      (url.pathname.startsWith('/settings/usage') || url.hash.startsWith('#settings/usage'));
   } catch { return false; }
 }
 
 async function selectProviderView(providerId, source, webContents) {
-  if (providerId !== 'copilot' || source !== 'actions') return;
-  // GitHub renders the product switcher in the billing overview client-side.
-  // Selecting Actions after each load makes the saved overview source stable.
+  if (providerId !== 'copilot') return;
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const selected = await webContents.executeJavaScript(`(() => {
       const controls = [...document.querySelectorAll('a, button, [role="tab"]')];
-      const action = controls.find((element) => element.innerText?.trim() === 'Actions');
-      if (!action) return false;
-      action.click();
+      const label = ${JSON.stringify(source === 'actions' ? 'actions' : 'premium')};
+      const control = controls.find((element) => label === 'actions'
+        ? /^actions$/i.test(element.innerText?.trim() || '')
+        : /^(?:copilot|premium requests?)$/i.test(element.innerText?.trim() || ''));
+      if (!control) return false;
+      control.click();
       return true;
     })()`, true).catch(() => false);
     if (selected) { await delay(800); return; }
     await delay(500);
+  }
+}
+
+async function autoConnectCopilot(win) {
+  const key = 'copilot:premium';
+  if (win.isDestroyed() || !win.isVisible() || providerConnectionInFlight.has(key)) return;
+  const currentUrl = win.webContents.getURL();
+  if (!isCanonicalUsageUrl('copilot', currentUrl)) {
+    if (isProviderOrigin('copilot', currentUrl) && !/\/(?:login|sessions?)(?:\/|$)/i.test(new URL(currentUrl).pathname)) {
+      await win.loadURL(sourceStartUrl('copilot', 'premium')).catch(() => {});
+    }
+    return;
+  }
+  providerConnectionInFlight.add(key);
+  try {
+    await setCollectorStatus('copilot', 'Reading Copilot usage from the signed-in GitHub account.', null, 'premium');
+    const premium = await applyCollectedUsage('copilot', await extractSettledUsageText('copilot', win.webContents, 'premium'), 'premium');
+    if (!premium.accepted) {
+      await setCollectorStatus('copilot', 'Signed in; waiting for Copilot usage to finish loading.', null, 'premium');
+      scheduleProviderRetry(key, () => autoConnectCopilot(win));
+      return;
+    }
+    clearProviderRetry(key);
+    await enableProvider('copilot');
+    let config = await readCollector();
+    Object.assign(collectorEntry(config, 'copilot', 'premium'), { configured: true, url: win.webContents.getURL(), status: 'Copilot usage connected and updated automatically.', lastSync: new Date().toISOString() });
+    Object.assign(collectorEntry(config, 'copilot', 'actions'), { configured: true, url: sourceStartUrl('copilot', 'actions'), status: 'Reading Actions minutes.', lastSync: null });
+    await writeCollector(config);
+    notifyCollectorChanged();
+
+    const actionsWindow = createProviderWindow('copilot', false, 'actions');
+    await actionsWindow.loadURL(sourceStartUrl('copilot', 'actions'));
+    await selectProviderView('copilot', 'actions', actionsWindow.webContents);
+    const actions = await applyCollectedUsage('copilot', await extractSettledUsageText('copilot', actionsWindow.webContents, 'actions'), 'actions');
+    config = await readCollector();
+    const actionsEntry = collectorEntry(config, 'copilot', 'actions');
+    actionsEntry.status = actions.accepted ? 'Actions minutes connected and updated automatically.' : actions.reason;
+    actionsEntry.lastSync = actions.accepted ? new Date().toISOString() : null;
+    await writeCollector(config);
+    notifyCollectorChanged();
+    win.hide();
+    showControlCenter();
+  } catch (error) {
+    await setCollectorStatus('copilot', `Could not read GitHub billing: ${error.message}`, null, 'premium');
+  } finally {
+    providerConnectionInFlight.delete(key);
+  }
+}
+
+async function autoConnectProvider(providerId, source, win) {
+  if (providerId === 'copilot') return autoConnectCopilot(win);
+  if (win.isDestroyed() || !win.isVisible()) return;
+  const key = `${providerId}:${source}`;
+  if (providerConnectionInFlight.has(key)) return;
+  const currentUrl = win.webContents.getURL();
+  if (!isCanonicalUsageUrl(providerId, currentUrl)) {
+    if (isProviderOrigin(providerId, currentUrl) && !/\/(?:auth|login|oauth)(?:\/|$)/i.test(new URL(currentUrl).pathname)) {
+      await win.loadURL(sourceStartUrl(providerId, source)).catch(() => {});
+    }
+    return;
+  }
+  providerConnectionInFlight.add(key);
+  try {
+    await setCollectorStatus(providerId, 'Reading usage from the signed-in account.', null, source);
+    const result = await applyCollectedUsage(providerId, await extractSettledUsageText(providerId, win.webContents, source), source);
+    const config = await readCollector();
+    const entry = collectorEntry(config, providerId, source);
+    if (result.accepted) {
+      clearProviderRetry(key);
+      await enableProvider(providerId);
+      Object.assign(entry, {
+        configured: true,
+        url: win.webContents.getURL(),
+        status: 'Connected and updated automatically.',
+        lastSync: new Date().toISOString(),
+      });
+      await writeCollector(config);
+      notifyCollectorChanged();
+      win.hide();
+      showControlCenter();
+    } else {
+      entry.status = 'Signed in; waiting for the usage page to finish loading.';
+      await writeCollector(config);
+      notifyCollectorChanged();
+      scheduleProviderRetry(key, () => autoConnectProvider(providerId, source, win));
+    }
+  } catch (error) {
+    await setCollectorStatus(providerId, `Could not read usage yet: ${error.message}`, null, source);
+  } finally {
+    providerConnectionInFlight.delete(key);
   }
 }
 
@@ -856,16 +872,22 @@ function createProviderWindow(providerId, show, source = 'default') {
     width: 1120, height: 790, show, title: `${APP_NAME} — connect ${PROVIDERS[providerId].name}`, autoHideMenuBar: true,
     webPreferences: { partition: COLLECTOR_PARTITION, contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false }
   });
-  // OAuth often opens a popup. Navigate the tracked window itself so it is
-  // still the window used by “Use current page” after Google redirects.
+  // OAuth often opens a popup. Keep the login in the tracked persistent
+  // window so the usage page can be detected immediately after authorization.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    win.loadURL(url).catch(() => {});
+    try {
+      const destination = new URL(url);
+      if (destination.protocol === 'https:') win.loadURL(destination.href).catch(() => {});
+    } catch { /* Ignore malformed popup destinations. */ }
     return { action: 'deny' };
   });
+  win.webContents.on('did-finish-load', () => { autoConnectProvider(providerId, source, win).catch(() => {}); });
+  win.webContents.on('did-navigate-in-page', () => { autoConnectProvider(providerId, source, win).catch(() => {}); });
   win.on('close', (event) => {
+    clearProviderRetry(key);
     if (!quitting) { event.preventDefault(); win.hide(); }
   });
-  win.on('closed', () => providerWindows.delete(key));
+  win.on('closed', () => { clearProviderRetry(key); providerWindows.delete(key); });
   providerWindows.set(key, win);
   return win;
 }
@@ -886,6 +908,7 @@ async function setCollectorStatus(providerId, status, lastSync = null, source = 
   entry.status = status;
   if (lastSync) entry.lastSync = lastSync;
   await writeCollector(config);
+  notifyCollectorChanged();
   return config;
 }
 
@@ -905,24 +928,8 @@ async function refreshPageProvider(providerId, source = 'default') {
 }
 
 async function refreshCopilotProvider() {
-  try {
-    await applyGitHubCopilotUsage();
-    const config = await readCollector();
-    const status = 'Updated from GitHub Billing API.';
-    for (const source of ['premium', 'actions']) {
-      const entry = collectorEntry(config, 'copilot', source);
-      entry.status = status;
-      entry.lastSync = new Date().toISOString();
-    }
-    await writeCollector(config);
-    return config;
-  } catch (error) {
-    const config = await readCollector();
-    const status = `GitHub Billing API unavailable: ${error.message}`;
-    for (const source of ['premium', 'actions']) collectorEntry(config, 'copilot', source).status = status;
-    await writeCollector(config);
-    return config;
-  }
+  await Promise.all(['premium', 'actions'].map((source) => refreshPageProvider('copilot', source)));
+  return readCollector();
 }
 
 async function refreshProvider(providerId, source = 'default') {
@@ -984,41 +991,27 @@ async function processCliRefreshRequests() {
 }
 
 async function openProvider(providerId, source = 'default') {
+  clearProviderRetry(`${providerId}:${source}`);
   const config = await readCollector();
   const entry = collectorEntry(config, providerId, source);
+  entry.status = `Sign in to ${PROVIDERS[providerId].name}; AI Widgets will connect automatically.`;
+  await writeCollector(config);
+  notifyCollectorChanged();
   const win = createProviderWindow(providerId, true, source);
-  await win.loadURL(sourceUrl(providerId, source, entry));
-  await selectProviderView(providerId, source, win.webContents);
+  // Start a first-time Copilot connection at GitHub's explicit login URL.
+  // Afterwards sourceStartUrl handles the direct authenticated analytics URL.
+  const url = providerId === 'copilot' && !entry.configured
+    ? PROVIDERS.copilot.startUrl
+    : sourceUrl(providerId, source, entry);
+  // The did-finish-load handler can immediately advance an authenticated
+  // Copilot login from Billing to its analytics page. Electron reports that
+  // expected superseded navigation as ERR_ABORTED; it is not a failed login.
+  await win.loadURL(url).catch((error) => {
+    if (error?.code !== 'ERR_ABORTED') throw error;
+  });
   win.show(); win.focus();
+  autoConnectProvider(providerId, source, win).catch(() => {});
   return readCollector();
-}
-
-async function saveProviderPage(providerId, source = 'default') {
-  const win = providerWindows.get(`${providerId}:${source}`);
-  if (!win || win.isDestroyed()) throw new Error(`Click “Open ${PROVIDERS[providerId].name}”, sign in in that window, then return here without closing it.`);
-  const url = win.webContents.getURL();
-  if (!isAllowedUsageUrl(providerId, url)) {
-    const destination = providerId === 'copilot' && source === 'actions' ? 'Settings → Billing → Overview → Actions' : providerId === 'copilot' ? 'Settings → Billing → Premium request analytics' : 'Settings / Usage';
-    throw new Error(`The window is still at ${url || 'a blank page'}. Finish signing in and navigate to ${destination} before saving it.`);
-  }
-  const config = await readCollector();
-  const entry = collectorEntry(config, providerId, source);
-  Object.assign(entry, { configured: true, url, status: 'Page saved; starting update.' });
-  await writeCollector(config);
-  // The page is already open and authenticated. Read it in place instead of
-  // immediately calling loadURL() again: ChatGPT's usage screen is a SPA and
-  // that reload can remain pending while the configuration UI waits for IPC.
-  let result;
-  try {
-    result = await applyCollectedUsage(providerId, await extractSettledUsageText(providerId, win.webContents, source), source);
-    entry.status = result.accepted ? 'Page saved and read.' : result.reason;
-    entry.lastSync = result.accepted ? new Date().toISOString() : null;
-  } catch (error) {
-    entry.status = `Page saved; the first read failed: ${error.message}`;
-  }
-  await writeCollector(config);
-  win.hide();
-  return config;
 }
 
 function createWindow() {
@@ -1037,6 +1030,16 @@ function createWindow() {
     if (!quitting) { event.preventDefault(); windowRef.hide(); }
   });
   windowRef.on('closed', () => { windowRef = undefined; });
+}
+
+function resizeControlWindow(contentHeight) {
+  if (!windowRef || windowRef.isDestroyed() || !Number.isFinite(contentHeight)) return;
+  const bounds = windowRef.getBounds();
+  const { workArea } = screen.getDisplayMatching(bounds);
+  const height = Math.max(420, Math.min(Math.ceil(contentHeight), workArea.height - 32));
+  if (Math.abs(bounds.height - height) < 2) return;
+  const y = Math.max(workArea.y + 16, Math.min(bounds.y, workArea.y + workArea.height - height - 16));
+  windowRef.setBounds({ ...bounds, y, height });
 }
 
 function showControlCenter() {
@@ -1095,9 +1098,11 @@ app.on('activate', showControlCenter);
 ipcMain.handle('usage:read', readData);
 ipcMain.handle('providers:save-enabled', (_event, ids) => saveEnabledProviders(ids));
 ipcMain.handle('collector:info', readCollector);
-ipcMain.handle('collector:open', (_event, providerId, source) => PROVIDERS[providerId] ? openProvider(providerId, source) : Promise.reject(new Error('Invalid provider.')));
-ipcMain.handle('collector:save-page', (_event, providerId, source) => PROVIDERS[providerId] ? saveProviderPage(providerId, source) : Promise.reject(new Error('Invalid provider.')));
+ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_IDS.includes(providerId)
+  ? openProvider(providerId, normaliseProviderSource(providerId, source))
+  : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.handle('collector:refresh', refreshAllProviders);
+ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());
 ipcMain.handle('desktop-widget:state', desktopWidgetState);

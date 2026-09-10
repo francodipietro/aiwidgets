@@ -106,6 +106,7 @@ function render() {
 function renderError(error) {
   console.error('AI Widgets: widget surface failed to load:', error);
   root.innerHTML = '<div class="panel-root"><div class="panel-heading">AI Widgets</div><p>Unable to load widget data. Try updating again.</p></div>';
+  fitPanelToDisplay();
 }
 
 root.addEventListener('click', async (event) => {

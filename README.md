@@ -4,14 +4,13 @@ Local, privacy-preserving subscription-usage widgets for Claude, Codex, and GitH
 
 Ubuntu GNOME and macOS both provide desktop cards and a top-bar integration. The Electron control window is shared; the native integrations render the same locally stored usage data.
 
-The app uses its own persistent, isolated browser profile to read the Claude and Codex usage pages. Chrome does not need to be open. Copilot is read from GitHub's authenticated Billing API through the local GitHub CLI. AI Widgets stores normalized usage values locally; it does not store conversations, page text, or GitHub tokens.
+The app uses its own persistent, isolated browser profile to read the Claude, Codex, and GitHub Copilot usage pages. Chrome does not need to be open. AI Widgets stores normalized usage values locally; it does not store conversations, page text, or GitHub tokens.
 
 ## Requirements
 
 - Node.js 20 or newer
 - Ubuntu with GNOME Shell 46 for the native desktop widget and top-panel menu
 - macOS for the Electron control window, menu-bar item, and desktop cards
-- [GitHub CLI](https://cli.github.com/) (`gh`) for GitHub Copilot data
 
 ## Run locally
 
@@ -34,17 +33,10 @@ The control window starts in English and creates its data file at:
 ## Connect subscriptions
 
 1. Open **Connect accounts**.
-2. For Claude or Codex, select its **Open** button, sign in in the isolated window, open **Settings / Usage**, then select **Use current page**.
-3. For Copilot, authenticate the local GitHub CLI once:
+2. Select **Connect Claude** or **Connect Codex** and sign in in the isolated window. AI Widgets opens the usage view, detects it, saves the connection, and closes the window automatically.
+3. Select **Connect GitHub**, sign in, and let AI Widgets open the billing views. It reads Premium requests and Actions minutes, then closes the window automatically.
 
-   ```bash
-   gh auth login -h github.com
-   gh auth refresh -h github.com -s user
-   ```
-
-   AI Widgets reads the authenticated account's official Billing API. The token remains in GitHub CLI's keyring and is never copied into AI Widgets.
-
-AI Widgets refreshes configured sources every minute while it is running. Copilot Pro annual is calculated from GitHub's reported Premium request usage and its documented 300-request monthly entitlement. GitHub Actions is calculated from the Billing API's runner costs, normalized to the included quota for the authenticated GitHub plan.
+AI Widgets refreshes configured sources every minute while it is running. Copilot Premium requests and GitHub Actions minutes are read from the signed-in GitHub billing views.
 
 On Ubuntu, the Debian package installs an XDG autostart entry. AI Widgets starts hidden after sign-in, performs an immediate refresh, and continues refreshing once per minute. Opening AI Widgets from the app menu shows the control window; **Exit AI Widgets** stops it until the next sign-in.
 

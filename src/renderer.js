@@ -3,6 +3,7 @@ let state;
 let integrating = false;
 let managingProviders = false;
 let timer;
+let lastRequestedHeight;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const percentage = (usage) => usage ? Math.round(usage.available) : null;
@@ -58,26 +59,22 @@ function card(provider) {
 function integrationPanel() {
   const info = state.collector;
   if (!info) return '<section id="integration"><p>Loading account connection…</p></section>';
-  const sourceControls = (providerId, source, label, destination, sourceInfo) => {
-    const lastSync = sourceInfo.lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(sourceInfo.lastSync)) : 'not updated yet';
-    return `<section class="account-source"><div><b>${label}</b><p>${escapeHtml(sourceInfo.status)}</p><small>${sourceInfo.configured ? `Source: ${escapeHtml(sourceInfo.url)} · ${lastSync}` : 'No page configured.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${providerId}" data-source="${source}">Open ${label}</button><button data-action="save-provider" data-provider="${providerId}" data-source="${source}">Save ${label}</button></div><small class="account-destination">${destination}</small></section>`;
-  };
   const row = (id) => {
     const provider = info.providers[id];
     if (id === 'copilot') {
       const status = [provider.premium, provider.actions].map((source) => source.status).find((value) => value && value !== 'Not connected.') || 'Not updated yet.';
       const lastSync = [provider.premium, provider.actions].map((source) => source.lastSync).filter(Boolean).sort().at(-1);
       const updated = lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(lastSync)) : 'not updated yet';
-      return `<article class="account-row"><div><h3>GitHub Copilot</h3><p>${escapeHtml(status)}</p><small>Source: authenticated GitHub Billing API via GitHub CLI · ${updated}</small></div><small class="account-destination">Premium requests and Actions minutes</small></article>`;
+      return `<article class="account-row"><div><h3>GitHub Copilot</h3><p>${escapeHtml(status)}</p><small>${provider.premium.configured ? `Connected GitHub account · ${updated}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="copilot" data-source="premium">${provider.premium.configured ? 'Reconnect GitHub' : 'Connect GitHub'}</button></div><small class="account-destination">Premium requests and Actions minutes</small></article>`;
     }
     const lastSync = provider.lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(provider.lastSync)) : 'not updated yet';
     const name = state.providers.find((item) => item.id === id)?.name || id;
     const destination = 'Settings / Usage';
-    return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(provider.status)}</p><small>${provider.configured ? `Source: ${escapeHtml(provider.url)} · ${lastSync}` : 'No usage page configured.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">Open ${escapeHtml(name)}</button><button data-action="save-provider" data-provider="${id}">Use current page</button></div><small class="account-destination">${destination}</small></article>`;
+    return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(provider.status)}</p><small>${provider.configured ? `Connected account · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">${provider.configured ? `Reconnect ${escapeHtml(name)}` : `Connect ${escapeHtml(name)}`}</button></div><small class="account-destination">${destination}</small></article>`;
   };
   return `<section id="integration"><h2>Connect subscriptions</h2>
-    <p>AI Widgets includes its own isolated browser, so Chrome can stay closed. Codex and Claude use their saved usage pages. GitHub Copilot uses the authenticated GitHub Billing API through the local GitHub CLI.</p>
-    ${state.settings.enabledProviders.map(row).join('')}
+    <p>Sign in once to each account. AI Widgets opens each provider's usage view, detects it automatically, and keeps its browser session private—Chrome and GitHub CLI are not required.</p>
+    ${['claude', 'codex', 'copilot'].map(row).join('')}
     <footer><button data-action="refresh-providers">Update now</button></footer>
     <p class="bridge-status">Sessions stay local to AI Widgets. Configured sources are refreshed every minute; conversations and page text are not retained.</p>
   </section>`;
@@ -97,6 +94,12 @@ function render() {
   const visibleProviders = state.providers.filter((provider) => activeProviderIds().has(provider.id));
   app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">Settings and connection · ${updated}</span><nav class="no-drag"><button data-action="providers">Providers</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button></nav></header>
     ${integrating ? integrationPanel() : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+  requestAnimationFrame(() => {
+    const height = Math.ceil(app.scrollHeight);
+    if (height === lastRequestedHeight) return;
+    lastRequestedHeight = height;
+    window.aiwidgets?.resizeControl(height);
+  });
 }
 
 function showError(error) {
@@ -106,9 +109,8 @@ function showError(error) {
 async function load() {
   try {
     if (!window.aiwidgets) throw new Error('The Electron secure bridge did not load.');
-    const previousCollector = state?.collector;
     state = await window.aiwidgets.read();
-    if (integrating) state.collector = previousCollector || await window.aiwidgets.collectorInfo();
+    if (integrating) state.collector = await window.aiwidgets.collectorInfo();
     render();
   } catch (error) { showError(error); }
 }
@@ -121,11 +123,6 @@ app.addEventListener('click', async (event) => {
   if (action === 'cancel-providers') { managingProviders = false; return render(); }
   if (action === 'integrate') { integrating = !integrating; managingProviders = false; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
   if (action === 'open-provider') { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.openProvider(target.dataset.provider, target.dataset.source); return render(); }
-  if (action === 'save-provider') {
-    try { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.saveProviderPage(target.dataset.provider, target.dataset.source); }
-    catch (error) { alert(error.message); }
-    return render();
-  }
   if (action === 'refresh-providers') { state.collector = await window.aiwidgets.refreshProviders(); return render(); }
 });
 
@@ -144,3 +141,4 @@ load().then(() => {
   timer = setInterval(load, 60_000);
 });
 window.aiwidgets?.onUsageChanged(() => load());
+window.aiwidgets?.onCollectorChanged(() => { if (integrating) load(); });

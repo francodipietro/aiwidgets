@@ -1,6 +1,8 @@
 const root = document.querySelector('#widget-app');
 const surface = new URLSearchParams(location.search).get('surface') || 'desktop';
 let state;
+let panelFitFrame = 0;
+let panelFitRevision = 0;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id === 'copilot' ? '../imgs/logo_copilot.png' : '../imgs/logo_chatgpt.svg';
@@ -39,7 +41,49 @@ function card(provider, id, panel) {
     ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests', 'requests')}${quota(provider?.actionsMinutes, 'Actions minutes', 'min')}`
     : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
   const note = panel ? '' : `<div class="widget-note">${escapeHtml(provider?.note || 'No data.')}</div>`;
-  return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header>${blocks}${note}</article>`;
+  return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
+}
+
+function fitPanelToDisplay() {
+  if (surface !== 'panel') return;
+  const revision = ++panelFitRevision;
+  if (panelFitFrame) cancelAnimationFrame(panelFitFrame);
+  root.classList.remove('panel-compact', 'panel-condensed');
+  root.style.removeProperty('--panel-scale');
+  root.style.removeProperty('--panel-unscaled-width');
+
+  const isCurrent = () => revision === panelFitRevision;
+  const resizeToContent = () => {
+    if (!isCurrent()) return;
+    const contentHeight = root.scrollHeight;
+    const availableHeight = window.innerHeight;
+    if (contentHeight <= availableHeight) {
+      window.desktopWidgets.resizePanel(Math.ceil(contentHeight));
+      return;
+    }
+
+    const scale = availableHeight / contentHeight;
+    root.style.setProperty('--panel-scale', scale.toFixed(4));
+    root.style.setProperty('--panel-unscaled-width', `${100 / scale}%`);
+    panelFitFrame = requestAnimationFrame(() => {
+      if (!isCurrent()) return;
+      window.desktopWidgets.resizePanel(Math.min(availableHeight, Math.ceil(root.scrollHeight * scale)));
+    });
+  };
+
+  panelFitFrame = requestAnimationFrame(() => {
+    if (!isCurrent()) return;
+    if (root.scrollHeight <= window.innerHeight) {
+      resizeToContent();
+      return;
+    }
+    root.classList.add('panel-compact');
+    panelFitFrame = requestAnimationFrame(() => {
+      if (!isCurrent()) return;
+      if (root.scrollHeight > window.innerHeight) root.classList.add('panel-condensed');
+      resizeToContent();
+    });
+  });
 }
 
 function render() {
@@ -56,11 +100,13 @@ function render() {
   const editLabel = state.layout?.editing ? 'Pin cards to desktop' : 'Edit position and size';
   const visibilityLabel = state.layout?.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards';
   root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage</div>${content}<div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button><button data-action="settings">Open settings</button><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
+  fitPanelToDisplay();
 }
 
 function renderError(error) {
   console.error('AI Widgets: widget surface failed to load:', error);
   root.innerHTML = '<div class="panel-root"><div class="panel-heading">AI Widgets</div><p>Unable to load widget data. Try updating again.</p></div>';
+  fitPanelToDisplay();
 }
 
 root.addEventListener('click', async (event) => {
@@ -102,6 +148,8 @@ window.addEventListener('wheel', async (event) => {
     renderError(error);
   }
 }, { passive: false });
+
+window.addEventListener('resize', fitPanelToDisplay);
 
 window.desktopWidgets.onState((nextState) => { state = nextState; render(); });
 window.desktopWidgets.state().then((nextState) => { state = nextState; render(); }).catch(renderError);

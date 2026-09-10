@@ -51,7 +51,7 @@ const activeProviderIds = () => new Set(state.settings.enabledProviders);
 function card(provider) {
   return `<article class="card ${provider.id}" style="--accent:${escapeHtml(provider.accent)}">
     <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1><button class="refresh" data-action="refresh" title="Refresh">↻</button></div>
-    <div class="usage-row ${provider.id === 'copilot' ? 'single' : ''}">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
+    <div class="usage-row">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
     <p class="note">${escapeHtml(provider.note || 'Updated from your local source.')}</p>
   </article>`;
 }

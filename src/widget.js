@@ -46,9 +46,15 @@ function fitPanelToDisplay() {
   if (surface !== 'panel') return;
   root.classList.remove('panel-compact', 'panel-condensed');
   requestAnimationFrame(() => {
-    if (root.scrollHeight > window.innerHeight) root.classList.add('panel-compact');
-    if (root.scrollHeight > window.innerHeight) root.classList.add('panel-condensed');
-    window.desktopWidgets.resizePanel(Math.ceil(root.scrollHeight));
+    if (root.scrollHeight <= window.innerHeight) {
+      window.desktopWidgets.resizePanel(Math.ceil(root.scrollHeight));
+      return;
+    }
+    root.classList.add('panel-compact');
+    requestAnimationFrame(() => {
+      if (root.scrollHeight > window.innerHeight) root.classList.add('panel-condensed');
+      window.desktopWidgets.resizePanel(Math.ceil(root.scrollHeight));
+    });
   });
 }
 

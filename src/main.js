@@ -351,7 +351,8 @@ function trayPopoverBounds(preferredHeight) {
   const display = screen.getDisplayNearestPoint(trayRef?.getBounds() || screen.getCursorScreenPoint());
   const { workArea } = display;
   const maxHeight = Math.max(1, workArea.height - 24);
-  const currentHeight = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().height : maxHeight;
+  const initialHeight = Math.min(720, maxHeight);
+  const currentHeight = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().height : initialHeight;
   const requestedHeight = Number.isFinite(preferredHeight) ? preferredHeight : currentHeight;
   const height = Math.max(Math.min(280, maxHeight), Math.min(Math.ceil(requestedHeight), maxHeight));
   const trayBounds = trayRef?.getBounds();

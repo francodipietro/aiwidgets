@@ -624,7 +624,7 @@ function parseVisibleUsage(providerId, text, source = 'default') {
       return actionsMinutes ? { actionsMinutes, note: 'Synced Actions minutes from GitHub billing with AI Widgets.' } : null;
     }
     const monthly = findCopilotUsage(text);
-    return monthly ? { monthly, note: 'Synced Premium requests from GitHub billing with AI Widgets.' } : null;
+    return monthly ? { monthly, note: `Synced ${monthly.label || 'Copilot usage'} from GitHub billing with AI Widgets.` } : null;
   }
   const session = findUsage(text, SESSION_LABELS);
   const weekly = findUsage(text, WEEKLY_LABELS);

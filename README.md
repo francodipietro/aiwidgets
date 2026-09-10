@@ -4,7 +4,7 @@ Local, privacy-preserving subscription-usage widgets for Claude, Codex, and GitH
 
 Ubuntu GNOME and macOS both provide desktop cards and a top-bar integration. The Electron control window is shared; the native integrations render the same locally stored usage data.
 
-The app uses its own persistent, isolated browser profile to read the Claude, Codex, and GitHub Copilot usage pages. Chrome does not need to be open. AI Widgets stores normalized usage values locally; it does not store conversations, page text, or GitHub tokens.
+The app uses its own persistent, isolated browser profile to read the Claude, Codex, and GitHub Copilot usage pages. Chrome does not need to be open. Its local browser session retains the provider cookies needed to stay signed in; AI Widgets stores normalized usage values but does not retain conversations, page text, or a copied GitHub token.
 
 ## Requirements
 

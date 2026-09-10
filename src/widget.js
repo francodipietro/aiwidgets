@@ -14,7 +14,7 @@ function quota(usage, label) {
   const quantity = Number.isFinite(usage.used) && Number.isFinite(usage.included) ? `${formatNumber(usage.used)} / ${formatNumber(usage.included)} min used` : 'consumed';
   const reset = usage.resetLabel || (usage.resetsAt ? `Resets ${new Date(usage.resetsAt).toLocaleString('en-US')}` : 'No reset date');
   const billed = Number.isFinite(usage.billedAmount) ? `<div class="quota-meta quota-reset">Billed this month: $${usage.billedAmount.toFixed(2)}</div>` : '';
-  return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">${consumed}%</strong><span class="quota-consumed">${escapeHtml(quantity)}</span></div><div class="quota-bar"><i class="quota-fill" style="width:${Math.max(2, consumed)}%"></i></div><div class="quota-meta">${available}% available</div><div class="quota-meta quota-reset">${escapeHtml(reset)}</div>${billed}</section>`;
+  return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">${consumed}%</strong><span class="quota-consumed">${escapeHtml(quantity)}</span></div><div class="quota-bar"><i class="quota-fill" style="width:${consumed}%"></i></div><div class="quota-meta">${available}% available</div><div class="quota-meta quota-reset">${escapeHtml(reset)}</div>${billed}</section>`;
 }
 
 function card(provider, id, panel) {

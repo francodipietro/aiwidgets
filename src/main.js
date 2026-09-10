@@ -225,10 +225,15 @@ function boundedWidgetPosition(bounds, display) {
   const { workArea } = display;
   const right = workArea.x + workArea.width - bounds.width - MAC_WIDGET_MARGIN;
   const top = workArea.y + 18;
-  if (desktopLayout.autoPosition || desktopLayout.x === null || desktopLayout.y === null) return { x: right, y: top };
+  const maxX = Math.max(workArea.x, workArea.x + workArea.width - bounds.width);
+  const maxY = Math.max(workArea.y, workArea.y + workArea.height - bounds.height);
+  const clamp = (value, min, max) => Math.max(min, Math.min(value, max));
+  if (desktopLayout.autoPosition || desktopLayout.x === null || desktopLayout.y === null) {
+    return { x: clamp(right, workArea.x, maxX), y: clamp(top, workArea.y, maxY) };
+  }
   return {
-    x: Math.max(workArea.x, Math.min(desktopLayout.x, workArea.x + workArea.width - bounds.width)),
-    y: Math.max(workArea.y, Math.min(desktopLayout.y, workArea.y + workArea.height - bounds.height)),
+    x: clamp(desktopLayout.x, workArea.x, maxX),
+    y: clamp(desktopLayout.y, workArea.y, maxY),
   };
 }
 

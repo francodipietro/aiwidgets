@@ -41,37 +41,50 @@ function render() {
   root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage</div>${cards}<div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button><button data-action="settings">Open settings</button><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
 }
 
+function renderError(error) {
+  console.error('AI Widgets: widget surface failed to load:', error);
+  root.innerHTML = '<div class="panel-root"><div class="panel-heading">AI Widgets</div><p>Unable to load widget data. Try updating again.</p></div>';
+}
+
 root.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
-  if (action === 'refresh') {
-    state = await window.desktopWidgets.refresh();
-  } else if (action === 'toggle-visible') {
-    await window.desktopWidgets.toggleVisible();
-    state = await window.desktopWidgets.state();
-  } else if (action === 'edit') {
-    await window.desktopWidgets.setEditing(!state.layout?.editing);
-    state = await window.desktopWidgets.state();
-  } else if (action === 'anchor') {
-    await window.desktopWidgets.anchor();
-    state = await window.desktopWidgets.state();
-  } else if (action === 'settings') {
-    await window.desktopWidgets.openSettings();
-    state = await window.desktopWidgets.state();
-  } else if (action === 'exit') {
-    await window.desktopWidgets.exit();
-    return;
+  try {
+    if (action === 'refresh') {
+      state = await window.desktopWidgets.refresh();
+    } else if (action === 'toggle-visible') {
+      await window.desktopWidgets.toggleVisible();
+      state = await window.desktopWidgets.state();
+    } else if (action === 'edit') {
+      await window.desktopWidgets.setEditing(!state.layout?.editing);
+      state = await window.desktopWidgets.state();
+    } else if (action === 'anchor') {
+      await window.desktopWidgets.anchor();
+      state = await window.desktopWidgets.state();
+    } else if (action === 'settings') {
+      await window.desktopWidgets.openSettings();
+      state = await window.desktopWidgets.state();
+    } else if (action === 'exit') {
+      await window.desktopWidgets.exit();
+      return;
+    }
+    render();
+  } catch (error) {
+    renderError(error);
   }
-  render();
 });
 
 window.addEventListener('wheel', async (event) => {
   if (surface !== 'desktop' || state?.layout?.editing !== true || !event.ctrlKey) return;
   event.preventDefault();
-  await window.desktopWidgets.resize(event.deltaY < 0 ? 10 : -10);
-  state = await window.desktopWidgets.state();
-  render();
+  try {
+    await window.desktopWidgets.resize(event.deltaY < 0 ? 10 : -10);
+    state = await window.desktopWidgets.state();
+    render();
+  } catch (error) {
+    renderError(error);
+  }
 }, { passive: false });
 
 window.desktopWidgets.onState((nextState) => { state = nextState; render(); });
-window.desktopWidgets.state().then((nextState) => { state = nextState; render(); });
+window.desktopWidgets.state().then((nextState) => { state = nextState; render(); }).catch(renderError);

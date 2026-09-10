@@ -324,7 +324,7 @@ function createDesktopWidget() {
     webPreferences: { preload: path.join(import.meta.dirname, 'widget-preload.cjs'), contextIsolation: true, nodeIntegration: false },
   });
   desktopWidgetRef.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-  desktopWidgetRef.on('moved', () => {
+  desktopWidgetRef.on('move', () => {
     if (applyingDesktopBounds || desktopLayout.editing !== true) return;
     const { x, y } = desktopWidgetRef.getBounds();
     desktopLayout = normaliseDesktopLayout({ ...desktopLayout, x, y, autoPosition: false });

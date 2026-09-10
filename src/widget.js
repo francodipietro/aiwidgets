@@ -7,11 +7,11 @@ const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id ==
 const providerName = (id) => id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : 'Codex';
 const formatNumber = (value) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 
-function quota(usage, label) {
+function quota(usage, label, unit = '') {
   if (!usage || !Number.isFinite(usage.available)) return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">—</strong><span class="quota-consumed">no data</span></div></section>`;
   const available = Math.max(0, Math.min(100, Math.round(usage.available)));
   const consumed = 100 - available;
-  const quantity = Number.isFinite(usage.used) && Number.isFinite(usage.included) ? `${formatNumber(usage.used)} / ${formatNumber(usage.included)} min used` : 'consumed';
+  const quantity = Number.isFinite(usage.used) && Number.isFinite(usage.included) ? `${formatNumber(usage.used)} / ${formatNumber(usage.included)}${unit ? ` ${unit}` : ''} used` : 'consumed';
   const reset = usage.resetLabel || (usage.resetsAt ? `Resets ${new Date(usage.resetsAt).toLocaleString('en-US')}` : 'No reset date');
   const billed = Number.isFinite(usage.billedAmount) ? `<div class="quota-meta quota-reset">Billed this month: $${usage.billedAmount.toFixed(2)}</div>` : '';
   return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">${consumed}%</strong><span class="quota-consumed">${escapeHtml(quantity)}</span></div><div class="quota-bar"><i class="quota-fill" style="width:${consumed}%"></i></div><div class="quota-meta">${available}% available</div><div class="quota-meta quota-reset">${escapeHtml(reset)}</div>${billed}</section>`;
@@ -20,7 +20,7 @@ function quota(usage, label) {
 function card(provider, id, panel) {
   const name = provider?.name || providerName(id);
   const blocks = id === 'copilot'
-    ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests')}${quota(provider?.actionsMinutes, 'Actions minutes')}`
+    ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests', 'requests')}${quota(provider?.actionsMinutes, 'Actions minutes', 'min')}`
     : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
   const note = panel ? '' : `<div class="widget-note">${escapeHtml(provider?.note || 'No data.')}</div>`;
   return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header>${blocks}${note}</article>`;

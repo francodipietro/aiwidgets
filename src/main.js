@@ -543,6 +543,21 @@ function nextMonthlyResetLabel() {
   return `Resets ${new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(next)} at 12:00 AM UTC`;
 }
 
+function cliEnvironment() {
+  // Apps launched by Finder receive a minimal PATH, unlike terminals. Include
+  // the standard Homebrew locations so an installed GitHub CLI is available
+  // to the packaged macOS app too.
+  if (process.platform !== 'darwin') return process.env;
+  const directories = [
+    ...(process.env.PATH || '').split(path.delimiter),
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+  ].filter(Boolean);
+  return { ...process.env, PATH: [...new Set(directories)].join(path.delimiter) };
+}
+
 async function githubApi(endpoint) {
   let result;
   try {
@@ -550,8 +565,10 @@ async function githubApi(endpoint) {
       timeout: 20_000,
       maxBuffer: 2 * 1024 * 1024,
       windowsHide: true,
+      env: cliEnvironment(),
     });
   } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('GitHub CLI (`gh`) was not found. Install it, then restart AI Widgets.');
     const detail = String(error.stderr || error.message || '').trim().replace(/\s+/g, ' ');
     throw new Error(detail || 'GitHub CLI could not read Billing API.');
   }
@@ -658,8 +675,19 @@ function resetNearValue(text, valueIndex, nextValueIndex) {
   for (const match of after.matchAll(/\b(?:resets?|renews?)\b[^\n.]{0,70}/ig)) {
     candidates.push({ text: match[0].trim(), distance: match.index });
   }
-  candidates.sort((a, b) => a.distance - b.distance);
-  return candidates[0]?.text || null;
+  // Usage pages can retain a prior reset timestamp in nearby descriptive
+  // text. An absolute reset in the past is never useful to the user, so skip
+  // it instead of presenting it as the next reset.
+  const current = Date.now();
+  const upcoming = candidates.filter((candidate) => {
+    const dateText = candidate.text
+      .replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '')
+      .replace(/\s+at\s+/ig, ' ');
+    const timestamp = Date.parse(dateText);
+    return !Number.isFinite(timestamp) || timestamp >= current - 60_000;
+  });
+  upcoming.sort((a, b) => a.distance - b.distance);
+  return upcoming[0]?.text || null;
 }
 
 function findUsage(text, labels) {

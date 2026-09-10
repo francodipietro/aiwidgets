@@ -44,12 +44,24 @@ function render() {
 root.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
   if (!action) return;
-  if (action === 'refresh') state = await window.desktopWidgets.refresh();
-  if (action === 'toggle-visible') await window.desktopWidgets.toggleVisible();
-  if (action === 'edit') await window.desktopWidgets.setEditing(!state.layout?.editing);
-  if (action === 'anchor') await window.desktopWidgets.anchor();
-  if (action === 'settings') await window.desktopWidgets.openSettings();
-  if (action === 'exit') await window.desktopWidgets.exit();
+  if (action === 'refresh') {
+    state = await window.desktopWidgets.refresh();
+  } else if (action === 'toggle-visible') {
+    await window.desktopWidgets.toggleVisible();
+    state = await window.desktopWidgets.state();
+  } else if (action === 'edit') {
+    await window.desktopWidgets.setEditing(!state.layout?.editing);
+    state = await window.desktopWidgets.state();
+  } else if (action === 'anchor') {
+    await window.desktopWidgets.anchor();
+    state = await window.desktopWidgets.state();
+  } else if (action === 'settings') {
+    await window.desktopWidgets.openSettings();
+    state = await window.desktopWidgets.state();
+  } else if (action === 'exit') {
+    await window.desktopWidgets.exit();
+    return;
+  }
   render();
 });
 
@@ -57,6 +69,7 @@ window.addEventListener('wheel', async (event) => {
   if (surface !== 'desktop' || state?.layout?.editing !== true || !event.ctrlKey) return;
   event.preventDefault();
   await window.desktopWidgets.resize(event.deltaY < 0 ? 10 : -10);
+  state = await window.desktopWidgets.state();
 }, { passive: false });
 
 window.desktopWidgets.onState((nextState) => { state = nextState; render(); });

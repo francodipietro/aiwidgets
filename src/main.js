@@ -69,6 +69,7 @@ let trayPopoverRef;
 let trayRef;
 let desktopLayout = { ...DEFAULT_DESKTOP_LAYOUT };
 let layoutSaveTimer;
+let layoutSaveInFlight = Promise.resolve();
 let applyingDesktopBounds = false;
 let quitting = false;
 let refreshInFlight;
@@ -146,7 +147,24 @@ async function saveDesktopLayout() {
 
 function scheduleDesktopLayoutSave() {
   clearTimeout(layoutSaveTimer);
-  layoutSaveTimer = setTimeout(() => { saveDesktopLayout().catch(() => {}); }, 150);
+  layoutSaveTimer = setTimeout(() => {
+    layoutSaveTimer = undefined;
+    queueDesktopLayoutSave().catch(() => {});
+  }, 150);
+}
+
+function queueDesktopLayoutSave() {
+  layoutSaveInFlight = layoutSaveInFlight.catch(() => {}).then(() => saveDesktopLayout());
+  return layoutSaveInFlight;
+}
+
+async function flushDesktopLayoutSave() {
+  if (layoutSaveTimer) {
+    clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = undefined;
+    await queueDesktopLayoutSave();
+  }
+  await layoutSaveInFlight.catch(() => {});
 }
 
 async function fileExists(target) {
@@ -225,7 +243,10 @@ function applyDesktopWidgetInteractivity() {
 function setDesktopWidgetBounds(data) {
   if (!desktopWidgetRef || desktopWidgetRef.isDestroyed()) return;
   const dimensions = widgetDimensions(data);
-  const position = boundedWidgetPosition(dimensions, screen.getPrimaryDisplay());
+  const display = desktopLayout.autoPosition || desktopLayout.x === null || desktopLayout.y === null
+    ? screen.getPrimaryDisplay()
+    : screen.getDisplayNearestPoint({ x: desktopLayout.x, y: desktopLayout.y });
+  const position = boundedWidgetPosition(dimensions, display);
   applyingDesktopBounds = true;
   desktopWidgetRef.setBounds({ ...position, ...dimensions });
   applyingDesktopBounds = false;
@@ -348,8 +369,8 @@ async function initialiseMacDesktopIntegration() {
   await refreshNativeWidgets();
 }
 
-function destroyMacDesktopIntegration() {
-  clearTimeout(layoutSaveTimer);
+async function destroyMacDesktopIntegration() {
+  await flushDesktopLayoutSave();
   desktopWidgetRef?.destroy();
   trayPopoverRef?.destroy();
   trayRef?.destroy();
@@ -365,7 +386,7 @@ async function requestQuit() {
   if (quitting) return;
   quitting = true;
   await setRuntimeActive(false).catch(() => {});
-  destroyMacDesktopIntegration();
+  await destroyMacDesktopIntegration().catch(() => {});
   app.quit();
 }
 
@@ -1010,11 +1031,11 @@ app.whenReady().then(async () => {
   app.setLoginItemSettings({ openAtLogin: process.platform !== 'linux' });
   if (openSettingsOnStart) showControlCenter();
 });
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   if (usageCliRequested) return;
-  quitting = true;
-  setRuntimeActive(false).catch(() => {});
-  destroyMacDesktopIntegration();
+  if (quitting) return;
+  event.preventDefault();
+  requestQuit().catch(() => {});
 });
 app.on('activate', showControlCenter);
 

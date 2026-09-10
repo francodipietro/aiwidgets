@@ -146,11 +146,15 @@ async function saveDesktopLayout() {
   await writeJson(desktopLayoutPath(), { ...desktopLayout, editing: false });
 }
 
+function logDesktopLayoutSaveError(error) {
+  console.error(`AI Widgets: could not save desktop widget layout: ${error.message}`);
+}
+
 function scheduleDesktopLayoutSave() {
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = setTimeout(() => {
     layoutSaveTimer = undefined;
-    queueDesktopLayoutSave().catch(() => {});
+    queueDesktopLayoutSave().catch(logDesktopLayoutSaveError);
   }, 150);
 }
 
@@ -163,9 +167,9 @@ async function flushDesktopLayoutSave() {
   if (layoutSaveTimer) {
     clearTimeout(layoutSaveTimer);
     layoutSaveTimer = undefined;
-    await queueDesktopLayoutSave();
+    queueDesktopLayoutSave();
   }
-  await layoutSaveInFlight.catch(() => {});
+  await layoutSaveInFlight.catch(logDesktopLayoutSaveError);
 }
 
 async function fileExists(target) {
@@ -290,7 +294,10 @@ async function setDesktopLayout(patch) {
   // reaches disk.
   clearTimeout(layoutSaveTimer);
   layoutSaveTimer = undefined;
-  await queueDesktopLayoutSave();
+  await queueDesktopLayoutSave().catch((error) => {
+    logDesktopLayoutSaveError(error);
+    throw error;
+  });
   await refreshNativeWidgets();
   return { ...desktopLayout };
 }
@@ -355,7 +362,8 @@ function createTrayPopover() {
   trayPopoverRef.setAlwaysOnTop(true, 'pop-up-menu');
   trayPopoverRef.on('blur', () => trayPopoverRef?.hide());
   trayPopoverRef.on('closed', () => { trayPopoverRef = undefined; });
-  trayPopoverRef.loadFile(path.join(import.meta.dirname, 'widget.html'), { query: { surface: 'panel' } }).catch(() => {});
+  trayPopoverRef.loadFile(path.join(import.meta.dirname, 'widget.html'), { query: { surface: 'panel' } })
+    .catch((error) => console.error(`AI Widgets: could not load menu-bar panel: ${error.message}`));
   return trayPopoverRef;
 }
 

@@ -674,8 +674,17 @@ function resetNearValue(text, valueIndex, nextValueIndex) {
   for (const match of after.matchAll(/\b(?:resets?|renews?)\b[^\n.]{0,70}/ig)) {
     candidates.push({ text: match[0].trim(), distance: match.index });
   }
-  candidates.sort((a, b) => a.distance - b.distance);
-  return candidates[0]?.text || null;
+  // Usage pages can retain a prior reset timestamp in nearby descriptive
+  // text. An absolute reset in the past is never useful to the user, so skip
+  // it instead of presenting it as the next reset.
+  const current = Date.now();
+  const upcoming = candidates.filter((candidate) => {
+    const dateText = candidate.text.replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '');
+    const timestamp = Date.parse(dateText);
+    return !Number.isFinite(timestamp) || timestamp >= current - 60_000;
+  });
+  upcoming.sort((a, b) => a.distance - b.distance);
+  return upcoming[0]?.text || null;
 }
 
 function findUsage(text, labels) {

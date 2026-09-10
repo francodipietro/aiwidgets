@@ -12,11 +12,15 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .widget-header { display: flex; gap: 6px; align-items: center; }
 .widget-header h2 { flex: 1; margin: 0; font-size: 17px; font-weight: 700; line-height: 1.2; }
 .widget-logo { width: 22px; height: 22px; object-fit: contain; }
+.desktop-root .widget-header { min-height: 22px; }
+.desktop-root .widget-header h2 { overflow: hidden; font-size: 15px; line-height: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-root .quota { min-height: 81px; }
+.desktop-root .quota-reset { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quota { margin-top: 6px; }
 .quota-label { color: #aeb8c8; font-size: 10px; }
-.quota-summary { display: flex; gap: 5px; align-items: end; margin-top: 1px; }
+.quota-summary { display: flex; min-height: 24px; gap: 5px; align-items: end; margin-top: 1px; }
 .quota-value { color: #fff; font-size: 22px; font-weight: 800; line-height: 1; }
-.quota-consumed { color: #d6dce8; font-size: 10px; line-height: 1.1; }
+.quota-consumed { min-width: 0; overflow: hidden; color: #d6dce8; font-size: 10px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
 .quota-bar { height: 5px; margin-top: 5px; overflow: hidden; border-radius: 5px; background: rgba(226,229,240,.18); }
 .quota-fill { display: block; height: 100%; border-radius: inherit; background: #c9ddff; }
 .claude .quota-fill { background: #f2ae93; }
@@ -26,9 +30,10 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .widget-note { color: #b8c0cf; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .desktop-edit-hint { margin: 7px 8px 0; color: #c9ddff; font-size: 9px; text-align: center; }
 body.editing .desktop-root, body.editing .desktop-root * { -webkit-app-region: drag; }
-.panel-root { height: 100vh; overflow-y: auto; padding: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: rgba(18,24,35,.94); box-shadow: 0 12px 30px rgba(0,0,0,.3); }
+.panel-root { min-height: 0; overflow: hidden; padding: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: rgba(18,24,35,.94); box-shadow: 0 12px 30px rgba(0,0,0,.3); }
 .panel-heading { margin: 3px 6px 9px; color: #fff; font-size: 14px; font-weight: 750; }
 .panel-card { width: 100%; min-height: 0; margin: 7px 0; padding: 12px 14px; border: 0; border-radius: 12px; background: rgba(18,37,62,.96); }
+.panel-card .quota-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .panel-card.claude { background: rgba(58,38,32,.96); }
 .panel-card.copilot { background: rgba(43,46,53,.97); }
 .panel-card .widget-header h2 { font-size: 16px; }
@@ -37,3 +42,5 @@ body.editing .desktop-root, body.editing .desktop-root * { -webkit-app-region: d
 .panel-actions button { padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.1); color: #eef3fb; font-size: 12px; text-align: left; }
 .panel-actions button:hover { background: rgba(255,255,255,.17); }
 .panel-actions .danger { color: #ffd2d6; }
+.panel-compact .panel-root { padding: 6px; }.panel-compact .panel-heading { margin: 2px 4px 5px; font-size: 13px; }.panel-compact .panel-card { margin: 4px 0; padding: 8px 10px; }.panel-compact .panel-card .quota-list { gap: 7px; }.panel-compact .panel-card .quota { margin-top: 4px; }.panel-compact .quota-label, .panel-compact .quota-consumed { font-size: 9px; }.panel-compact .quota-value { font-size: 19px; }.panel-compact .quota-summary { min-height: 21px; }.panel-compact .quota-bar { margin-top: 3px; }.panel-compact .quota-meta { font-size: 8px; }.panel-compact .panel-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 6px; }.panel-compact .panel-actions button { padding: 6px 7px; font-size: 10px; }
+.panel-condensed .panel-root { padding: 4px; }.panel-condensed .panel-card { margin: 3px 0; padding: 6px 8px; }.panel-condensed .panel-card .widget-header h2 { font-size: 14px; }.panel-condensed .widget-logo { width: 18px; height: 18px; }.panel-condensed .quota-reset { display: none; }.panel-condensed .panel-actions { margin-top: 4px; }.panel-condensed .panel-actions button { padding: 4px 6px; }

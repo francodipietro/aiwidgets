@@ -347,10 +347,13 @@ function createDesktopWidget() {
   return desktopWidgetRef;
 }
 
-function trayPopoverBounds() {
+function trayPopoverBounds(preferredHeight) {
   const display = screen.getDisplayNearestPoint(trayRef?.getBounds() || screen.getCursorScreenPoint());
   const { workArea } = display;
-  const height = Math.min(720, workArea.height - 24);
+  const maxHeight = Math.max(1, workArea.height - 24);
+  const currentHeight = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().height : maxHeight;
+  const requestedHeight = Number.isFinite(preferredHeight) ? preferredHeight : currentHeight;
+  const height = Math.max(Math.min(280, maxHeight), Math.min(Math.ceil(requestedHeight), maxHeight));
   const trayBounds = trayRef?.getBounds();
   const requestedX = trayBounds ? trayBounds.x + trayBounds.width - MAC_PANEL_WIDTH : workArea.x + workArea.width - MAC_PANEL_WIDTH - 8;
   const requestedY = trayBounds ? trayBounds.y + trayBounds.height + 4 : workArea.y + 4;
@@ -359,6 +362,14 @@ function trayPopoverBounds() {
     y: Math.max(workArea.y + 4, Math.min(requestedY, workArea.y + workArea.height - height - 8)),
     width: MAC_PANEL_WIDTH, height,
   };
+}
+
+function resizeTrayPopover(contentHeight) {
+  if (!trayPopoverRef || trayPopoverRef.isDestroyed() || !Number.isFinite(contentHeight)) return;
+  const bounds = trayPopoverBounds(contentHeight);
+  const current = trayPopoverRef.getBounds();
+  if (current.x === bounds.x && current.y === bounds.y && current.width === bounds.width && current.height === bounds.height) return;
+  trayPopoverRef.setBounds(bounds);
 }
 
 function createTrayPopover() {
@@ -381,7 +392,7 @@ async function toggleTrayPopover() {
   const popup = createTrayPopover();
   if (popup.isVisible()) { popup.hide(); return; }
   const state = await desktopWidgetState();
-  popup.setBounds(trayPopoverBounds());
+  popup.setBounds(trayPopoverBounds(popup.getBounds().height));
   popup.show();
   popup.focus();
   popup.webContents.send('desktop-widget:state', state);
@@ -1111,5 +1122,6 @@ ipcMain.handle('desktop-widget:toggle-visible', () => setDesktopLayout({ desktop
 ipcMain.handle('desktop-widget:set-editing', (_event, editing) => setDesktopLayout({ editing: Boolean(editing), desktopVisible: true }));
 ipcMain.handle('desktop-widget:anchor', () => setDesktopLayout({ autoPosition: true, x: null, y: null }));
 ipcMain.handle('desktop-widget:resize', (_event, delta) => adjustDesktopWidgetWidth(delta));
+ipcMain.on('desktop-widget:resize-panel', (_event, height) => resizeTrayPopover(height));
 ipcMain.handle('desktop-widget:open-settings', () => { trayPopoverRef?.hide(); showControlCenter(); });
 ipcMain.handle('desktop-widget:exit', requestQuit);

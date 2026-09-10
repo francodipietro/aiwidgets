@@ -39,7 +39,17 @@ function card(provider, id, panel) {
     ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests', 'requests')}${quota(provider?.actionsMinutes, 'Actions minutes', 'min')}`
     : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
   const note = panel ? '' : `<div class="widget-note">${escapeHtml(provider?.note || 'No data.')}</div>`;
-  return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header>${blocks}${note}</article>`;
+  return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
+}
+
+function fitPanelToDisplay() {
+  if (surface !== 'panel') return;
+  root.classList.remove('panel-compact', 'panel-condensed');
+  requestAnimationFrame(() => {
+    if (root.scrollHeight > window.innerHeight) root.classList.add('panel-compact');
+    if (root.scrollHeight > window.innerHeight) root.classList.add('panel-condensed');
+    window.desktopWidgets.resizePanel(Math.ceil(root.scrollHeight));
+  });
 }
 
 function render() {
@@ -56,6 +66,7 @@ function render() {
   const editLabel = state.layout?.editing ? 'Pin cards to desktop' : 'Edit position and size';
   const visibilityLabel = state.layout?.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards';
   root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage</div>${content}<div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button><button data-action="settings">Open settings</button><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
+  fitPanelToDisplay();
 }
 
 function renderError(error) {

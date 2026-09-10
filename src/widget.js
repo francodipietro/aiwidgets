@@ -70,6 +70,7 @@ window.addEventListener('wheel', async (event) => {
   event.preventDefault();
   await window.desktopWidgets.resize(event.deltaY < 0 ? 10 : -10);
   state = await window.desktopWidgets.state();
+  render();
 }, { passive: false });
 
 window.desktopWidgets.onState((nextState) => { state = nextState; render(); });

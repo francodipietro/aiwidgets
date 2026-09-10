@@ -20,6 +20,11 @@ npm install
 npm start
 ```
 
+With npm 11, install scripts are opt-in. This project deliberately records
+approval for Electron and electron-winstaller in `package.json`'s
+`allowScripts` field, so their required platform-binary setup runs during
+`npm install`. Check the approved scripts with `npm install-scripts ls`.
+
 The control window starts in English and creates its data file at:
 
 ```text

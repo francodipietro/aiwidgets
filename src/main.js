@@ -68,6 +68,7 @@ let desktopWidgetRef;
 let trayPopoverRef;
 let trayRef;
 let desktopLayout = { ...DEFAULT_DESKTOP_LAYOUT };
+let desktopWidgetData = DEFAULT_DATA;
 let layoutSaveTimer;
 let layoutSaveInFlight = Promise.resolve();
 let applyingDesktopBounds = false;
@@ -264,6 +265,7 @@ async function desktopWidgetState() {
 async function refreshNativeWidgets() {
   if (!isMacDesktopIntegration()) return;
   const state = await desktopWidgetState();
+  desktopWidgetData = state.data;
   if (desktopWidgetRef && !desktopWidgetRef.isDestroyed()) {
     setDesktopWidgetBounds(state.data);
     applyDesktopWidgetInteractivity();
@@ -291,7 +293,12 @@ async function setDesktopLayout(patch) {
 async function adjustDesktopWidgetWidth(change) {
   const delta = Number(change);
   if (!Number.isFinite(delta)) return { ...desktopLayout };
-  return setDesktopLayout({ cardWidth: desktopLayout.cardWidth + delta });
+  desktopLayout = normaliseDesktopLayout({ ...desktopLayout, cardWidth: desktopLayout.cardWidth + delta });
+  // Wheel events arrive in bursts. Resize the visible window immediately, but
+  // defer the disk write just as we do while dragging the cards.
+  scheduleDesktopLayoutSave();
+  setDesktopWidgetBounds(desktopWidgetData);
+  return { ...desktopLayout };
 }
 
 function createDesktopWidget() {

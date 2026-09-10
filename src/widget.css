@@ -1,6 +1,7 @@
 :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; background: transparent; color: #f8f7f6; user-select: none; }
+#widget-app { width: var(--panel-unscaled-width, 100%); transform: scale(var(--panel-scale, 1)); transform-origin: top left; }
 button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .desktop-root { display: flex; gap: 20px; align-items: flex-start; }
 .widget-card { width: var(--card-width); min-height: 258px; padding: 11px; border: 1px solid rgba(255,255,255,.17); border-radius: 14px; background: rgba(18,37,62,.92); box-shadow: 0 14px 34px rgba(0,0,0,.34); }
@@ -42,5 +43,23 @@ body.editing .desktop-root, body.editing .desktop-root * { -webkit-app-region: d
 .panel-actions button { padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.1); color: #eef3fb; font-size: 12px; text-align: left; }
 .panel-actions button:hover { background: rgba(255,255,255,.17); }
 .panel-actions .danger { color: #ffd2d6; }
-.panel-compact .panel-root { padding: 6px; }.panel-compact .panel-heading { margin: 2px 4px 5px; font-size: 13px; }.panel-compact .panel-card { margin: 4px 0; padding: 8px 10px; }.panel-compact .panel-card .quota-list { gap: 7px; }.panel-compact .panel-card .quota { margin-top: 4px; }.panel-compact .quota-label, .panel-compact .quota-consumed { font-size: 9px; }.panel-compact .quota-value { font-size: 19px; }.panel-compact .quota-summary { min-height: 21px; }.panel-compact .quota-bar { margin-top: 3px; }.panel-compact .quota-meta { font-size: 8px; }.panel-compact .panel-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 6px; }.panel-compact .panel-actions button { padding: 6px 7px; font-size: 10px; }
-.panel-condensed .panel-root { padding: 4px; }.panel-condensed .panel-card { margin: 3px 0; padding: 6px 8px; }.panel-condensed .panel-card .widget-header h2 { font-size: 14px; }.panel-condensed .widget-logo { width: 18px; height: 18px; }.panel-condensed .quota-reset { display: none; }.panel-condensed .panel-actions { margin-top: 4px; }.panel-condensed .panel-actions button { padding: 4px 6px; }
+.panel-compact .panel-root { padding: 6px; }
+.panel-compact .panel-heading { margin: 2px 4px 5px; font-size: 13px; }
+.panel-compact .panel-card { margin: 4px 0; padding: 8px 10px; }
+.panel-compact .panel-card .quota-list { gap: 7px; }
+.panel-compact .panel-card .quota { margin-top: 4px; }
+.panel-compact .quota-label,
+.panel-compact .quota-consumed { font-size: 9px; }
+.panel-compact .quota-value { font-size: 19px; }
+.panel-compact .quota-summary { min-height: 21px; }
+.panel-compact .quota-bar { margin-top: 3px; }
+.panel-compact .quota-meta { font-size: 8px; }
+.panel-compact .panel-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; margin-top: 6px; }
+.panel-compact .panel-actions button { padding: 6px 7px; font-size: 10px; }
+.panel-condensed .panel-root { padding: 4px; }
+.panel-condensed .panel-card { margin: 3px 0; padding: 6px 8px; }
+.panel-condensed .panel-card .widget-header h2 { font-size: 14px; }
+.panel-condensed .widget-logo { width: 18px; height: 18px; }
+.panel-condensed .quota-reset { display: none; }
+.panel-condensed .panel-actions { margin-top: 4px; }
+.panel-condensed .panel-actions button { padding: 4px 6px; }

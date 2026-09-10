@@ -1,6 +1,8 @@
 const root = document.querySelector('#widget-app');
 const surface = new URLSearchParams(location.search).get('surface') || 'desktop';
 let state;
+let panelFitFrame = 0;
+let panelFitRevision = 0;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id === 'copilot' ? '../imgs/logo_copilot.png' : '../imgs/logo_chatgpt.svg';
@@ -44,16 +46,42 @@ function card(provider, id, panel) {
 
 function fitPanelToDisplay() {
   if (surface !== 'panel') return;
+  const revision = ++panelFitRevision;
+  if (panelFitFrame) cancelAnimationFrame(panelFitFrame);
   root.classList.remove('panel-compact', 'panel-condensed');
-  requestAnimationFrame(() => {
+  root.style.removeProperty('--panel-scale');
+  root.style.removeProperty('--panel-unscaled-width');
+
+  const isCurrent = () => revision === panelFitRevision;
+  const resizeToContent = () => {
+    if (!isCurrent()) return;
+    const contentHeight = root.scrollHeight;
+    const availableHeight = window.innerHeight;
+    if (contentHeight <= availableHeight) {
+      window.desktopWidgets.resizePanel(Math.ceil(contentHeight));
+      return;
+    }
+
+    const scale = availableHeight / contentHeight;
+    root.style.setProperty('--panel-scale', scale.toFixed(4));
+    root.style.setProperty('--panel-unscaled-width', `${100 / scale}%`);
+    panelFitFrame = requestAnimationFrame(() => {
+      if (!isCurrent()) return;
+      window.desktopWidgets.resizePanel(Math.min(availableHeight, Math.ceil(root.scrollHeight * scale)));
+    });
+  };
+
+  panelFitFrame = requestAnimationFrame(() => {
+    if (!isCurrent()) return;
     if (root.scrollHeight <= window.innerHeight) {
-      window.desktopWidgets.resizePanel(Math.ceil(root.scrollHeight));
+      resizeToContent();
       return;
     }
     root.classList.add('panel-compact');
-    requestAnimationFrame(() => {
+    panelFitFrame = requestAnimationFrame(() => {
+      if (!isCurrent()) return;
       if (root.scrollHeight > window.innerHeight) root.classList.add('panel-condensed');
-      window.desktopWidgets.resizePanel(Math.ceil(root.scrollHeight));
+      resizeToContent();
     });
   });
 }
@@ -119,6 +147,8 @@ window.addEventListener('wheel', async (event) => {
     renderError(error);
   }
 }, { passive: false });
+
+window.addEventListener('resize', fitPanelToDisplay);
 
 window.desktopWidgets.onState((nextState) => { state = nextState; render(); });
 window.desktopWidgets.state().then((nextState) => { state = nextState; render(); }).catch(renderError);

@@ -6,7 +6,18 @@ let timer;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const percentage = (usage) => usage ? Math.round(usage.available) : null;
-const resetText = (usage) => usage?.resetLabel || (usage?.resetsAt ? `Resets ${new Intl.DateTimeFormat('en-US', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(usage.resetsAt))}` : 'No reset date');
+const resetText = (usage) => {
+  const label = usage?.resetLabel;
+  if (label) {
+    const timestamp = Date.parse(label.replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, ''));
+    if (!Number.isFinite(timestamp) || timestamp >= Date.now() - 60_000) return label;
+  }
+  if (usage?.resetsAt) {
+    const timestamp = Date.parse(usage.resetsAt);
+    if (Number.isFinite(timestamp) && timestamp >= Date.now() - 60_000) return `Resets ${new Intl.DateTimeFormat('en-US', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(timestamp))}`;
+  }
+  return 'No reset date';
+};
 const meter = (usage, label) => {
   const available = percentage(usage);
   if (available === null) return `<section class="usage unavailable"><span>${label}</span><strong>—</strong><small>no data</small></section>`;

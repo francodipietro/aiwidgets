@@ -7,12 +7,25 @@ const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id ==
 const providerName = (id) => id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : 'Codex';
 const formatNumber = (value) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 
+function resetText(usage) {
+  const label = usage?.resetLabel;
+  if (label) {
+    const timestamp = Date.parse(label.replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, ''));
+    if (!Number.isFinite(timestamp) || timestamp >= Date.now() - 60_000) return label;
+  }
+  if (usage?.resetsAt) {
+    const timestamp = Date.parse(usage.resetsAt);
+    if (Number.isFinite(timestamp) && timestamp >= Date.now() - 60_000) return `Resets ${new Date(timestamp).toLocaleString('en-US')}`;
+  }
+  return 'No reset date';
+}
+
 function quota(usage, label, unit = '') {
   if (!usage || !Number.isFinite(usage.available)) return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">—</strong><span class="quota-consumed">no data</span></div></section>`;
   const available = Math.max(0, Math.min(100, Math.round(usage.available)));
   const consumed = 100 - available;
   const quantity = Number.isFinite(usage.used) && Number.isFinite(usage.included) ? `${formatNumber(usage.used)} / ${formatNumber(usage.included)}${unit ? ` ${unit}` : ''} used` : 'consumed';
-  const reset = usage.resetLabel || (usage.resetsAt ? `Resets ${new Date(usage.resetsAt).toLocaleString('en-US')}` : 'No reset date');
+  const reset = resetText(usage);
   const billed = Number.isFinite(usage.billedAmount) ? `<div class="quota-meta quota-reset">Billed this month: $${usage.billedAmount.toFixed(2)}</div>` : '';
   return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">${consumed}%</strong><span class="quota-consumed">${escapeHtml(quantity)}</span></div><div class="quota-bar"><i class="quota-fill" style="width:${consumed}%"></i></div><div class="quota-meta">${available}% available</div><div class="quota-meta quota-reset">${escapeHtml(reset)}</div>${billed}</section>`;
 }

@@ -64,6 +64,7 @@ let quitting = false;
 let refreshInFlight;
 let cliRefreshInFlight = false;
 const providerConnectionInFlight = new Set();
+const providerRefreshInFlight = new Map();
 const providerRetryTimers = new Map();
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
@@ -559,6 +560,17 @@ function isProviderOrigin(providerId, value) {
   } catch { return false; }
 }
 
+function isProviderAuthenticationUrl(providerId, value) {
+  try {
+    const url = new URL(value);
+    const pathAndHash = `${url.pathname}${url.hash}`;
+    if (providerId === 'codex') return url.hostname === 'auth.openai.com' || /\/(?:auth|login|oauth)(?:\/|$)/i.test(pathAndHash);
+    if (providerId === 'claude') return /\/(?:auth|login|oauth)(?:\/|$)/i.test(pathAndHash);
+    if (providerId === 'copilot') return url.hostname === 'github.com' && /\/(?:login|sessions?)(?:\/|$)/i.test(url.pathname);
+  } catch { /* Invalid URLs are handled by the caller's navigation error. */ }
+  return false;
+}
+
 function isCanonicalUsageUrl(providerId, value) {
   try {
     const url = new URL(value);
@@ -750,7 +762,7 @@ async function setCollectorFailure(providerId, error, status, source = 'default'
   return config;
 }
 
-async function refreshPageProvider(providerId, source = 'default') {
+async function refreshPageProviderNow(providerId, source = 'default') {
   const config = await readCollector();
   const entry = collectorEntry(config, providerId, source);
   if (!entry.configured || !entry.url) return config;
@@ -760,12 +772,27 @@ async function refreshPageProvider(providerId, source = 'default') {
   try {
     await recordCollectorAttempt(providerId, 'Refreshing usage…', source);
     await win.loadURL(sourceUrl(providerId, source, entry));
+    if (isProviderAuthenticationUrl(providerId, win.webContents.getURL())) {
+      return setCollectorFailure(providerId, `Sign in to ${PROVIDERS[providerId].name} to refresh usage.`, 'Session expired; reconnect required.', source);
+    }
     await selectProviderView(providerId, source, win.webContents);
     const result = await applyCollectedUsage(providerId, await extractSettledUsageText(providerId, win.webContents, source), source);
     return result.accepted
       ? setCollectorStatus(providerId, 'Updated automatically.', new Date().toISOString(), source)
       : setCollectorFailure(providerId, result.reason, result.reason, source);
   } catch (error) { return setCollectorFailure(providerId, error, `Could not update: ${error.message}`, source); }
+}
+
+function refreshPageProvider(providerId, source = 'default') {
+  const key = `${providerId}:${source}`;
+  const active = providerRefreshInFlight.get(key);
+  if (active) return active;
+  const task = refreshPageProviderNow(providerId, source);
+  providerRefreshInFlight.set(key, task);
+  task.finally(() => {
+    if (providerRefreshInFlight.get(key) === task) providerRefreshInFlight.delete(key);
+  }).catch(() => {});
+  return task;
 }
 
 async function refreshCopilotProvider() {
@@ -945,6 +972,9 @@ ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_I
   ? openProvider(providerId, normaliseProviderSource(providerId, source))
   : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.handle('collector:refresh', refreshAllProviders);
+ipcMain.handle('collector:refresh-provider', (_event, providerId) => PAGE_PROVIDER_IDS.includes(providerId)
+  ? refreshProvider(providerId)
+  : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());

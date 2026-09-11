@@ -21,6 +21,14 @@ test('migrates legacy collector entries from lastSync to connection health field
   assert.equal(collector.providers.copilot.actions.configured, false);
 });
 
+test('migrates a legacy collector failure into a health error', () => {
+  const collector = normaliseCollector({
+    providers: { codex: { configured: true, lastSync: FIRST_SYNC, status: 'Could not update: Network timeout.' } },
+  });
+
+  assert.deepEqual(collector.providers.codex.error, { code: 'refresh-failed', message: 'Could not update: Network timeout.' });
+});
+
 test('records attempts and normalized failures without erasing the last successful refresh', () => {
   const connected = normaliseCollector({
     providers: { codex: { configured: true, lastSync: FIRST_SYNC, status: 'Updated automatically.' } },
@@ -74,5 +82,22 @@ test('summarizes fresh, stale, pending, and failed provider health for cards', (
   assert.deepEqual(providerConnectionHealth(normaliseCollector({ providers: { claude: { configured: true } } }), 'claude', now), {
     state: 'pending',
     message: 'Waiting for claude to update.',
+  });
+});
+
+test('distinguishes expired sessions and unavailable usage pages', () => {
+  const now = Date.parse('2026-09-11T12:04:00.000Z');
+  const expired = normaliseCollector({
+    providers: { claude: { configured: true, error: 'Sign in to continue.' } },
+  });
+  const changed = normaliseCollector({
+    providers: { codex: { configured: true, error: 'No session or weekly percentage was found on the usage page.' } },
+  });
+
+  assert.deepEqual(providerConnectionHealth(expired, 'claude', now), {
+    state: 'expired', message: 'Session expired · reconnect to update.',
+  });
+  assert.deepEqual(providerConnectionHealth(changed, 'codex', now), {
+    state: 'page-changed', message: 'Usage page changed or is unavailable.',
   });
 });

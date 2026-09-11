@@ -43,7 +43,7 @@ function card(provider, id, panel) {
   const blocks = id === 'copilot'
     ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests', 'requests')}${quota(provider?.actionsMinutes, 'Actions minutes', 'min')}`
     : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
-  const note = `<div class="widget-note health-${health.state}">${escapeHtml(health.message)}</div>`;
+  const note = `<div class="widget-note health-${health.state}" title="${escapeHtml(health.message)}">${escapeHtml(health.message)}</div>`;
   return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
 }
 

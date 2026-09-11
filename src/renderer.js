@@ -54,9 +54,9 @@ const activeProviderIds = () => new Set(state.settings.enabledProviders);
 
 function card(provider) {
   const health = providerConnectionHealth(state.collector, provider.id);
-  const reconnect = health.state === 'error' ? ' <button class="health-action" data-action="integrate">Reconnect</button>' : '';
+  const reconnect = health.state === 'expired' ? ' <button class="health-action" data-action="integrate">Reconnect</button>' : '';
   return `<article class="card ${provider.id}" style="--accent:${escapeHtml(provider.accent)}">
-    <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1><button class="refresh" data-action="refresh" title="Refresh">↻</button></div>
+    <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1><button class="refresh" data-action="refresh-provider" data-provider="${provider.id}" title="Refresh ${escapeHtml(provider.name)}">↻</button></div>
     <div class="usage-row">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
     <p class="note health ${health.state}">${escapeHtml(health.message)}${reconnect}</p>
   </article>`;
@@ -136,14 +136,18 @@ async function load() {
 }
 app.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
-  if (action === 'refresh') { await window.aiwidgets.refreshProviders(); return load(); }
+  if (action === 'refresh-provider') {
+    const providerId = event.target.closest('[data-provider]')?.dataset.provider;
+    if (providerId) await window.aiwidgets.refreshProvider(providerId);
+    return load();
+  }
   if (action === 'minimize') return window.aiwidgets.minimize();
   if (action === 'close') return window.aiwidgets.close();
   if (action === 'providers') { managingProviders = !managingProviders; integrating = false; setupProviderIds = null; return render(); }
   if (action === 'cancel-providers') { managingProviders = false; return render(); }
   if (action === 'integrate') { integrating = !integrating; managingProviders = false; setupProviderIds = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
   if (action === 'open-provider') { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.openProvider(target.dataset.provider, target.dataset.source); return render(); }
-  if (action === 'refresh-providers') { state.collector = await window.aiwidgets.refreshProviders(); return render(); }
+  if (action === 'refresh-providers') { await window.aiwidgets.refreshProviders(); return load(); }
 });
 
 app.addEventListener('submit', async (event) => {

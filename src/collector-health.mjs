@@ -22,14 +22,21 @@ export function normaliseCollectorError(error) {
 export function normaliseCollectorEntry(raw) {
   const input = raw && typeof raw === 'object' ? raw : {};
   const lastSuccess = timestamp(input.lastSuccess || input.lastSync);
+  const status = typeof input.status === 'string' && input.status ? input.status : 'Not connected.';
+  // Health fields were introduced after `status`. Preserve meaningful
+  // failures from older profiles instead of presenting their last successful
+  // sync as merely stale.
+  const legacyFailure = input.configured === true && /^(?:could not|sign in|login|required|no .*(?:usage|session|actions|copilot))/i.test(status)
+    ? status
+    : null;
   return {
     configured: input.configured === true,
     url: typeof input.url === 'string' ? input.url : null,
     lastSync: lastSuccess,
     lastSuccess,
     lastAttempt: timestamp(input.lastAttempt),
-    error: normaliseCollectorError(input.error),
-    status: typeof input.status === 'string' && input.status ? input.status : 'Not connected.',
+    error: normaliseCollectorError(input.error || legacyFailure),
+    status,
   };
 }
 
@@ -111,6 +118,8 @@ export function providerConnectionHealth(collector, providerId, now = Date.now()
   const failed = entries.find(([, entry]) => entry.error);
   if (failed) {
     const [source, entry] = failed;
+    if (entry.error.code === 'sign-in-required') return { state: 'expired', message: 'Session expired · reconnect to update.' };
+    if (entry.error.code === 'usage-unavailable') return { state: 'page-changed', message: 'Usage page changed or is unavailable.' };
     return { state: 'error', message: `${source}: ${entry.error.message}` };
   }
   if (entries.every(([, entry]) => !entry.configured)) return { state: 'disconnected', message: 'Not connected yet.' };

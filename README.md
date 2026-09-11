@@ -32,9 +32,12 @@ The control window starts in English and creates its data file at:
 
 ## Connect subscriptions
 
-1. Open **Connect accounts**.
-2. Select **Connect Claude** or **Connect Codex** and sign in in the isolated window. AI Widgets opens the usage view, detects it, saves the connection, and closes the window automatically.
-3. Select **Connect GitHub**, sign in, and let AI Widgets open the billing views. It reads Premium requests and Actions minutes, then closes the window automatically.
+On the first launch, choose the providers you want to activate. AI Widgets does not enable any provider by default, then immediately presents sign-in actions for your selection.
+
+After setup, open **Connect accounts** to add or reconnect a provider:
+
+1. Select **Connect Claude** or **Connect Codex** and sign in in the isolated window. AI Widgets opens the usage view, detects it, saves the connection, and closes the window automatically.
+2. Select **Connect GitHub**, sign in, and let AI Widgets open the billing views. It reads Premium requests and Actions minutes, then closes the window automatically.
 
 AI Widgets refreshes configured sources every minute while it is running. Copilot Premium requests and GitHub Actions minutes are read from the signed-in GitHub billing views.
 

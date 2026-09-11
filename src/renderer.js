@@ -2,6 +2,8 @@ const app = document.querySelector('#app');
 let state;
 let integrating = false;
 let managingProviders = false;
+let setupProviderIds = null;
+let onboardingError = '';
 let timer;
 let lastRequestedHeight;
 
@@ -56,7 +58,7 @@ function card(provider) {
   </article>`;
 }
 
-function integrationPanel() {
+function integrationPanel(providerIds = ['claude', 'codex', 'copilot']) {
   const info = state.collector;
   if (!info) return '<section id="integration"><p>Loading account connection…</p></section>';
   const row = (id) => {
@@ -72,12 +74,22 @@ function integrationPanel() {
     const destination = 'Settings / Usage';
     return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(provider.status)}</p><small>${provider.configured ? `Connected account · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">${provider.configured ? `Reconnect ${escapeHtml(name)}` : `Connect ${escapeHtml(name)}`}</button></div><small class="account-destination">${destination}</small></article>`;
   };
-  return `<section id="integration"><h2>Connect subscriptions</h2>
+  const selectedSetup = setupProviderIds !== null;
+  return `<section id="integration"><h2>${selectedSetup ? 'Connect selected accounts' : 'Connect subscriptions'}</h2>
     <p>Sign in once to each account. AI Widgets opens each provider's usage view, detects it automatically, and keeps its browser session private—Chrome and GitHub CLI are not required.</p>
-    ${['claude', 'codex', 'copilot'].map(row).join('')}
+    ${providerIds.map(row).join('')}
     <footer><button data-action="refresh-providers">Update now</button></footer>
     <p class="bridge-status">Sessions stay local to AI Widgets. Configured sources are refreshed every minute; conversations and page text are not retained.</p>
   </section>`;
+}
+
+function onboardingPanel() {
+  return `<form id="onboarding" class="setup-panel"><h2>Choose providers</h2>
+    <p>Select the AI services whose usage you want to see. Nothing is enabled until you choose it; the next step lets you sign in to each selected account.</p>
+    ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="provider" value="${provider.id}" /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${provider.id === 'copilot' ? 'Premium requests and Actions minutes' : 'Session and weekly usage'}</small></span></label>`).join('')}
+    ${onboardingError ? `<p class="form-error">${escapeHtml(onboardingError)}</p>` : ''}
+    <footer><button class="primary" type="submit">Continue to sign in</button></footer>
+  </form>`;
 }
 
 function providerPanel() {
@@ -90,10 +102,14 @@ function providerPanel() {
 
 function render() {
   if (!state) return;
+  const onboarding = state.settings?.onboardingComplete === false;
   const updated = state.updatedAt ? new Intl.DateTimeFormat('en-US', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(state.updatedAt)) : 'not updated yet';
   const visibleProviders = state.providers.filter((provider) => activeProviderIds().has(provider.id));
-  app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">Settings and connection · ${updated}</span><nav class="no-drag"><button data-action="providers">Providers</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button></nav></header>
-    ${integrating ? integrationPanel() : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+  const navigation = onboarding
+    ? '<button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>'
+    : `<button data-action="providers">Providers</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
+  app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">${onboarding ? 'First-time setup' : `Settings and connection · ${updated}`}</span><nav class="no-drag">${navigation}</nav></header>
+    ${onboarding ? onboardingPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
   requestAnimationFrame(() => {
     const height = Math.ceil(app.scrollHeight);
     if (height === lastRequestedHeight) return;
@@ -119,20 +135,38 @@ app.addEventListener('click', async (event) => {
   if (action === 'refresh') { await window.aiwidgets.refreshProviders(); return load(); }
   if (action === 'minimize') return window.aiwidgets.minimize();
   if (action === 'close') return window.aiwidgets.close();
-  if (action === 'providers') { managingProviders = !managingProviders; integrating = false; return render(); }
+  if (action === 'providers') { managingProviders = !managingProviders; integrating = false; setupProviderIds = null; return render(); }
   if (action === 'cancel-providers') { managingProviders = false; return render(); }
-  if (action === 'integrate') { integrating = !integrating; managingProviders = false; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
+  if (action === 'integrate') { integrating = !integrating; managingProviders = false; setupProviderIds = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
   if (action === 'open-provider') { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.openProvider(target.dataset.provider, target.dataset.source); return render(); }
   if (action === 'refresh-providers') { state.collector = await window.aiwidgets.refreshProviders(); return render(); }
 });
 
 app.addEventListener('submit', async (event) => {
-  if (event.target.id !== 'provider-settings') return;
+  if (!['provider-settings', 'onboarding'].includes(event.target.id)) return;
   event.preventDefault();
   const providers = [...event.target.querySelectorAll('input[name="provider"]:checked')].map((input) => input.value);
-  state = await window.aiwidgets.saveEnabledProviders(providers);
-  managingProviders = false;
-  render();
+  if (event.target.id === 'onboarding' && providers.length === 0) {
+    onboardingError = 'Choose at least one provider to continue.';
+    return render();
+  }
+  const completingOnboarding = event.target.id === 'onboarding';
+  try {
+    state = await window.aiwidgets.saveEnabledProviders(providers, completingOnboarding);
+    onboardingError = '';
+    setupProviderIds = completingOnboarding ? providers : null;
+    managingProviders = false;
+    integrating = completingOnboarding;
+    if (integrating) state.collector = await window.aiwidgets.collectorInfo();
+    render();
+  } catch (error) {
+    if (completingOnboarding) {
+      onboardingError = `Could not save your provider selection: ${error.message || String(error)}`;
+      render();
+      return;
+    }
+    showError(error);
+  }
 });
 
 load().then(() => {

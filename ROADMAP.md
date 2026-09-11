@@ -43,8 +43,8 @@ usuario desde su elección explícita hasta las acciones de login.
 - [x] Continuar a los botones de conexión de los proveedores elegidos.
 - [x] Probar visualmente la primera pantalla con un perfil aislado, sin tocar
   cookies ni configuración reales.
-- [ ] Confirmar manualmente la transición “seleccionar → Continue to sign in”
-  para Claude, Codex y Copilot, sin completar ningún login.
+- [x] Confirmar localmente la transición “seleccionar → Continue to sign in”
+  para una selección de proveedor, sin completar ningún login.
 - [ ] Abrir PR y resolver la revisión.
 
 Criterio de aceptación: en un perfil vacío no hay tarjetas ni refresh de un

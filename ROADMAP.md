@@ -60,7 +60,7 @@ lleguen a una versión publicada.
 - [x] Añadir fixtures anonimizados de Claude, Codex y GitHub Copilot.
 - [x] Añadir pruebas para porcentajes, cuotas faltantes, fechas vencidas y
   páginas parcialmente cargadas.
-- [ ] Añadir pruebas para la migración de datos anteriores al onboarding.
+- [x] Añadir pruebas para la migración de datos anteriores al onboarding.
 - [x] Incorporar `npm test` al checklist local.
 
 Criterio de aceptación: un cambio de parser no puede mergearse sin pruebas de

@@ -7,16 +7,18 @@ import { randomUUID } from 'node:crypto';
 import { runUsageCli } from './usage-cli.mjs';
 import { defaultCollector, normaliseCollector, withCollectorAttempt, withCollectorFailure, withCollectorSuccess } from './collector-health.mjs';
 import { PROVIDER_SESSION_ORIGINS, isProviderAuthenticationUrl, isProviderOrigin } from './provider-origins.mjs';
+import { alertNotification, normaliseAlertState, pendingFailureAlerts, pendingUsageAlerts, settleProviderAlerts, silenceFailureAlert } from './alerts.mjs';
 import { DEFAULT_DATA, createFirstRunData, disconnectUsageData, normaliseUsageData, resetFirstRunData } from './usage-data.mjs';
 import { parseVisibleUsage } from './usage-parser.mjs';
 
-const { app, BrowserWindow, ipcMain, nativeImage, screen, session, Tray } = electron;
+const { app, BrowserWindow, Notification, ipcMain, nativeImage, screen, session, Tray } = electron;
 const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
 const RUNTIME_FILE = 'runtime.json';
 const DESKTOP_LAYOUT_FILE = 'desktop-widget.json';
 const HEARTBEAT_FILE = 'collector-heartbeat.json';
+const ALERTS_FILE = 'alerts.json';
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -129,6 +131,7 @@ function cliRefreshRequestDirectory() { return path.join(app.getPath('userData')
 function cliRefreshResponseDirectory() { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses'); }
 function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
 function desktopLayoutPath() { return path.join(app.getPath('userData'), DESKTOP_LAYOUT_FILE); }
+function alertsPath() { return path.join(app.getPath('userData'), ALERTS_FILE); }
 
 function enabledProviderIds(data) {
   const configured = data?.settings?.enabledProviders;
@@ -283,7 +286,7 @@ async function desktopWidgetState() {
 }
 
 async function readUiState() {
-  return { ...(await readData()), collector: await readCollector() };
+  return { ...(await readData()), collector: await readCollector(), alertState: await readAlertState() };
 }
 
 async function refreshNativeWidgets() {
@@ -550,6 +553,94 @@ function runPrivacyOperation(providerIds, operation) {
   return task;
 }
 
+let usageWork = Promise.resolve();
+
+// usage.json has several independent read-modify-write callers (automatic
+// refresh, the enabled-providers form, alert preferences, the privacy
+// operations). Without a shared queue, two of them racing can silently drop
+// each other's change: the last writer wins with a copy based on a stale
+// read, and nothing reports it. `mutate` receives the current data and
+// returns either the value to persist, or null to signal no change is
+// needed (skipping the write and the caller's notification).
+function withUsageData(mutate) {
+  const task = usageWork.catch(() => {}).then(async () => {
+    const current = await readData();
+    const next = await mutate(current);
+    if (next === null) return { data: current, changed: false };
+    next.updatedAt = new Date().toISOString();
+    await writeJson(await ensureDataFile(), next);
+    return { data: next, changed: true };
+  });
+  usageWork = task.catch(() => {});
+  return task;
+}
+
+let alertWork = Promise.resolve();
+
+async function readAlertState() {
+  try { return normaliseAlertState(JSON.parse(await readFile(alertsPath(), 'utf8'))); }
+  catch { return normaliseAlertState({}); }
+}
+
+async function writeAlertState(state) {
+  await writeJson(alertsPath(), state);
+  return state;
+}
+
+// Every alert path reads, decides and writes the same file, so they run one
+// after another. Losing a write here would re-announce a threshold that was
+// already delivered, which is the one failure mode alerts must not have.
+function queueAlertWork(operation) {
+  const task = alertWork.catch(() => {}).then(operation);
+  alertWork = task.catch(() => {});
+  return task;
+}
+
+function emitAlert(alert) {
+  // Electron cannot report whether the user denied notifications, so an
+  // unsupported or blocked system simply produces nothing. The settings panel
+  // says so rather than letting the app look like it is working.
+  if (!Notification.isSupported()) return;
+  const { title, body } = alertNotification(alert);
+  const notification = new Notification({ title, body });
+  notification.on('click', () => showControlCenter());
+  notification.show();
+}
+
+async function evaluateAlerts() {
+  return queueAlertWork(async () => {
+    const [data, collector] = [await readData(), await readCollector()];
+    const now = Date.now();
+    const usage = pendingUsageAlerts({ data, alertState: await readAlertState(), now });
+    const failure = pendingFailureAlerts({ data, collector, alertState: usage.state, now });
+    await writeAlertState(failure.state);
+    [...usage.alerts, ...failure.alerts].forEach(emitAlert);
+    return [...usage.alerts, ...failure.alerts];
+  });
+}
+
+async function silenceProviderAlerts(providerId) {
+  if (!PAGE_PROVIDER_IDS.includes(providerId)) throw new Error('Invalid page provider.');
+  // Silencing must take effect immediately even if evaluateAlerts has not yet
+  // run a cycle to create the failing episode itself — otherwise the click
+  // would be a silent no-op and the alert would still fire on the next cycle.
+  const collector = await readCollector();
+  await queueAlertWork(async () => writeAlertState(silenceFailureAlert(await readAlertState(), providerId, collector)));
+  notifyUsageChanged();
+  return readUiState();
+}
+
+// Disconnecting or resetting can hand the same provider to a different
+// account, so its silenced failure episode must not carry over. A quota whose
+// usage was deleted has nothing left to track; one whose reading survives
+// (disconnect without deleting usage keeps the last known percentage on
+// screen) must be settled to match that frozen value rather than forgotten —
+// forgetting it would reset its ladder to zero and the very next evaluation
+// would re-announce the unchanged reading as if it were new.
+async function settleAlertsAfterPrivacyChange(providerIds, data) {
+  await queueAlertWork(async () => writeAlertState(settleProviderAlerts({ data, alertState: await readAlertState(), providerIds })));
+}
+
 async function disconnectProvider(providerId, clearUsage = false) {
   if (!PAGE_PROVIDER_IDS.includes(providerId)) throw new Error('Invalid page provider.');
   return runPrivacyOperation([providerId], async () => {
@@ -559,9 +650,8 @@ async function disconnectProvider(providerId, clearUsage = false) {
     if (providerId === 'copilot') collector.providers.copilot = defaults.providers.copilot;
     else collector.providers[providerId] = defaults.providers[providerId];
     await writeCollector(collector);
-    const data = disconnectUsageData(await readData(), providerId, clearUsage);
-    data.updatedAt = new Date().toISOString();
-    await writeJson(await ensureDataFile(), data);
+    const { data } = await withUsageData((current) => disconnectUsageData(current, providerId, clearUsage));
+    await settleAlertsAfterPrivacyChange([providerId], data);
     notifyCollectorChanged();
     notifyUsageChanged();
     return readUiState();
@@ -572,9 +662,8 @@ async function resetFirstTimeSetup(clearUsage = false) {
   return runPrivacyOperation(PAGE_PROVIDER_IDS, async () => {
     await clearCollectorPartition();
     await writeCollector(defaultCollector());
-    const data = resetFirstRunData(await readData(), clearUsage);
-    data.updatedAt = new Date().toISOString();
-    await writeJson(await ensureDataFile(), data);
+    const { data } = await withUsageData((current) => resetFirstRunData(current, clearUsage));
+    await settleAlertsAfterPrivacyChange(PAGE_PROVIDER_IDS, data);
     notifyCollectorChanged();
     notifyUsageChanged();
     return readUiState();
@@ -600,39 +689,49 @@ async function readData() {
 
 async function saveEnabledProviders(ids, completeOnboarding = false) {
   if (!Array.isArray(ids)) throw new Error('Enabled providers must be an array.');
-  const data = await readData();
-  data.settings.enabledProviders = ids.filter((id) => Object.hasOwn(PROVIDERS, id));
-  if (completeOnboarding) data.settings.onboardingComplete = true;
-  data.updatedAt = new Date().toISOString();
-  await writeJson(await ensureDataFile(), data);
+  const { data } = await withUsageData((current) => {
+    current.settings.enabledProviders = ids.filter((id) => Object.hasOwn(PROVIDERS, id));
+    if (completeOnboarding) current.settings.onboardingComplete = true;
+    return current;
+  });
   notifyUsageChanged();
   if (data.settings.enabledProviders.includes('copilot')) refreshProvider('copilot').catch(() => {});
   return data;
 }
 
-async function enableProvider(providerId) {
-  const data = await readData();
-  if (data.settings.enabledProviders.includes(providerId)) return data;
-  data.settings.enabledProviders.push(providerId);
-  data.updatedAt = new Date().toISOString();
-  await writeJson(await ensureDataFile(), data);
+async function saveAlertSettings(alerts) {
+  await withUsageData((current) => {
+    // normaliseUsageData already ran the incoming block through
+    // normaliseAlertSettings, so an unknown cadence or provider cannot survive.
+    current.settings.alerts = normaliseUsageData({ ...current, settings: { ...current.settings, alerts } }).settings.alerts;
+    return current;
+  });
   notifyUsageChanged();
+  return readUiState();
+}
+
+async function enableProvider(providerId) {
+  const { data, changed } = await withUsageData((current) => {
+    if (current.settings.enabledProviders.includes(providerId)) return null;
+    current.settings.enabledProviders.push(providerId);
+    return current;
+  });
+  if (changed) notifyUsageChanged();
   return data;
 }
 
 async function applyCollectedUsage(providerId, text, source = 'default') {
   const parsed = parseVisibleUsage(providerId, text, source);
   if (!parsed) return { accepted: false, reason: providerId === 'copilot' && source === 'actions' ? 'No Actions minutes usage was found yet.' : providerId === 'copilot' ? 'No Copilot usage was found yet.' : 'No session or weekly percentage was found on the usage page.' };
-  const target = await ensureDataFile();
-  const data = await readData();
-  const provider = data.providers.find((item) => item.id === providerId);
-  if (parsed.session) provider.session = { available: parsed.session.available, resetsAt: null, resetLabel: parsed.session.resetLabel || null };
-  if (parsed.weekly) provider.weekly = { available: parsed.weekly.available, resetsAt: null, resetLabel: parsed.weekly.resetLabel || null };
-  if (parsed.monthly) provider.monthly = { available: parsed.monthly.available, resetsAt: null, resetLabel: parsed.monthly.resetLabel || null, label: parsed.monthly.label || 'Premium requests', ...(Number.isFinite(parsed.monthly.used) ? { used: parsed.monthly.used } : {}), ...(Number.isFinite(parsed.monthly.included) ? { included: parsed.monthly.included } : {}) };
-  if (parsed.actionsMinutes) provider.actionsMinutes = parsed.actionsMinutes;
-  provider.note = parsed.note;
-  data.updatedAt = new Date().toISOString();
-  await writeJson(target, data);
+  await withUsageData((current) => {
+    const provider = current.providers.find((item) => item.id === providerId);
+    if (parsed.session) provider.session = { available: parsed.session.available, resetsAt: null, resetLabel: parsed.session.resetLabel || null };
+    if (parsed.weekly) provider.weekly = { available: parsed.weekly.available, resetsAt: null, resetLabel: parsed.weekly.resetLabel || null };
+    if (parsed.monthly) provider.monthly = { available: parsed.monthly.available, resetsAt: null, resetLabel: parsed.monthly.resetLabel || null, label: parsed.monthly.label || 'Premium requests', ...(Number.isFinite(parsed.monthly.used) ? { used: parsed.monthly.used } : {}), ...(Number.isFinite(parsed.monthly.included) ? { included: parsed.monthly.included } : {}) };
+    if (parsed.actionsMinutes) provider.actionsMinutes = parsed.actionsMinutes;
+    provider.note = parsed.note;
+    return current;
+  });
   notifyUsageChanged();
   return { accepted: true, session: parsed.session?.available ?? null, weekly: parsed.weekly?.available ?? null, monthly: parsed.monthly?.available ?? null };
 }
@@ -902,6 +1001,9 @@ function refreshAllProviders() {
     await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
       ? [refreshProvider('copilot')]
       : [refreshProvider(providerId)]));
+    // Alerts are decided once the cycle has written every provider, so a
+    // threshold and its failure state are judged against the same snapshot.
+    await evaluateAlerts().catch(() => {});
     return readCollector();
   })();
   refreshInFlight = task;
@@ -1081,6 +1183,9 @@ ipcMain.handle('collector:refresh-provider', (_event, providerId) => PAGE_PROVID
   : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.handle('collector:disconnect', (_event, providerId, clearUsage) => disconnectProvider(providerId, clearUsage === true));
 ipcMain.handle('onboarding:reset', (_event, clearUsage) => resetFirstTimeSetup(clearUsage === true));
+ipcMain.handle('alerts:save', (_event, alerts) => saveAlertSettings(alerts));
+ipcMain.handle('alerts:silence', (_event, providerId) => silenceProviderAlerts(providerId));
+ipcMain.handle('alerts:supported', () => Notification.isSupported());
 ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());

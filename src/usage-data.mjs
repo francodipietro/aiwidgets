@@ -1,10 +1,12 @@
+import { DEFAULT_ALERT_SETTINGS, normaliseAlertSettings } from './alerts.mjs';
+
 export const PROVIDER_IDS = ['claude', 'codex', 'copilot'];
 
 export const DEFAULT_DATA = {
   // Existing data files are considered set up unless they explicitly retain
   // the first-run flag. createFirstRunData() sets it to false only for a new
   // installation, so no provider is selected by assumption.
-  settings: { refreshMinutes: 1, enabledProviders: [], onboardingComplete: true },
+  settings: { refreshMinutes: 1, enabledProviders: [], onboardingComplete: true, alerts: DEFAULT_ALERT_SETTINGS },
   providers: [
     { id: 'claude', name: 'Claude', accent: '#f2ae93', session: null, weekly: null, note: 'Not connected yet.' },
     { id: 'codex', name: 'Codex', accent: '#c9ddff', session: null, weekly: null, note: 'Not connected yet.' },
@@ -40,7 +42,9 @@ export function resetFirstRunData(raw, clearUsage = false) {
   const data = normaliseUsageData(raw);
   return {
     ...data,
-    settings: { ...data.settings, enabledProviders: [], onboardingComplete: false },
+    // Returning to onboarding means starting from no opinions at all, so
+    // alert preferences go back to silent along with the provider selection.
+    settings: { ...data.settings, enabledProviders: [], onboardingComplete: false, alerts: DEFAULT_ALERT_SETTINGS },
     providers: clearUsage ? DEFAULT_DATA.providers.map((provider) => ({ ...provider })) : data.providers,
   };
 }
@@ -98,6 +102,9 @@ export function normaliseUsageData(raw) {
       // Data created before the onboarding feature already belongs to a user
       // who has configured the app; only explicit false starts the setup.
       onboardingComplete: input.settings?.onboardingComplete !== false,
+      // Alerts are opt-in: an absent or malformed block normalises to every
+      // provider silent rather than to a default that notifies.
+      alerts: normaliseAlertSettings(input.settings?.alerts),
     },
     providers,
     updatedAt: input.updatedAt || null,

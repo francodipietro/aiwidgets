@@ -99,13 +99,21 @@ cuenta anterior por accidente.
 Objetivo: avisar solo cuando el dato amerita atención, sin convertir la app en
 una fuente de ruido.
 
-- [ ] Preferencias por proveedor: umbrales de 20%, 10% y desactivado.
-- [ ] Notificación local al cruzar un umbral, una vez por período de reset.
-- [ ] Alerta opcional cuando falla un refresh durante un tiempo configurable.
-- [ ] Respetar las preferencias de notificaciones del sistema operativo.
+- [x] Preferencias por proveedor: alertas activadas o desactivadas, con
+  umbrales fijos por tipo de cuota — sesión al 75% y 90% de consumo, y cada
+  20% en las cuotas semanales y mensuales.
+- [x] Notificación local al cruzar un escalón, una vez por cuota y período de
+  reset. Solo se anuncia el escalón más alto alcanzado, de modo que un salto
+  grande entre dos refrescos produce un aviso y no varios.
+- [x] Alerta opcional cuando un proveedor deja de actualizarse, repetida cada
+  10, 30 o 60 minutos, con la opción de silenciar el episodio en curso desde
+  la tarjeta del proveedor.
+- [x] Respetar las preferencias de notificaciones del sistema operativo.
 
-Criterio de aceptación: ninguna alerta se emite sin opt-in y no se repite para
-la misma cuota/período.
+Criterio de aceptación: ninguna alerta se emite sin opt-in y ninguna alerta de
+cuota se repite para la misma cuota/período. Las alertas de fallo sí repiten a
+propósito —un colector roto sigue roto— hasta que el proveedor vuelve a
+actualizarse o el usuario silencia ese episodio.
 
 ## Fase 6 — historial local
 

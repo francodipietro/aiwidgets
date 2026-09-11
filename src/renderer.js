@@ -6,6 +6,8 @@ let integrating = false;
 let managingProviders = false;
 let setupProviderIds = null;
 let onboardingError = '';
+let privacyConfirmation = null;
+let privacyError = '';
 let timer;
 let lastRequestedHeight;
 
@@ -71,12 +73,13 @@ function integrationPanel(providerIds = ['claude', 'codex', 'copilot']) {
     if (id === 'copilot') {
       const lastSync = [provider.premium, provider.actions].map((source) => source.lastSync).filter(Boolean).sort().at(-1);
       const updated = lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(lastSync)) : 'not updated yet';
-      return `<article class="account-row"><div><h3>GitHub Copilot</h3><p>${escapeHtml(health.message)}</p><small>${provider.premium.configured ? `Connected GitHub account · ${updated}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="copilot" data-source="premium">${provider.premium.configured ? 'Reconnect GitHub' : 'Connect GitHub'}</button></div><small class="account-destination">Premium requests and Actions minutes</small></article>`;
+      const connected = provider.premium.configured || provider.actions.configured;
+      return `<article class="account-row"><div><h3>GitHub Copilot</h3><p>${escapeHtml(health.message)}</p><small>${connected ? `Connected GitHub account · ${updated}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="copilot" data-source="premium">${connected ? 'Reconnect GitHub' : 'Connect GitHub'}</button>${connected ? '<button class="danger" data-action="disconnect-provider" data-provider="copilot">Disconnect</button>' : ''}</div><small class="account-destination">Premium requests and Actions minutes</small></article>`;
     }
     const lastSync = provider.lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(provider.lastSync)) : 'not updated yet';
     const name = state.providers.find((item) => item.id === id)?.name || id;
     const destination = 'Settings / Usage';
-    return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(health.message)}</p><small>${provider.configured ? `Connected account · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">${provider.configured ? `Reconnect ${escapeHtml(name)}` : `Connect ${escapeHtml(name)}`}</button></div><small class="account-destination">${destination}</small></article>`;
+    return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(health.message)}</p><small>${provider.configured ? `Connected account · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">${provider.configured ? `Reconnect ${escapeHtml(name)}` : `Connect ${escapeHtml(name)}`}</button>${provider.configured ? `<button class="danger" data-action="disconnect-provider" data-provider="${id}">Disconnect</button>` : ''}</div><small class="account-destination">${destination}</small></article>`;
   };
   const selectedSetup = setupProviderIds !== null;
   return `<section id="integration"><h2>${selectedSetup ? 'Connect selected accounts' : 'Connect subscriptions'}</h2>
@@ -100,7 +103,25 @@ function providerPanel() {
   const selected = activeProviderIds();
   return `<form id="provider-settings"><h2>Visible providers</h2><p>Only selected providers are shown in the app, desktop widget, and panel menu. Selected providers are also the only ones refreshed automatically.</p>
     ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="provider" value="${provider.id}" ${selected.has(provider.id) ? 'checked' : ''} /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${provider.id === 'copilot' ? 'Premium requests and Actions minutes' : 'Session and weekly usage'}</small></span></label>`).join('')}
-    <footer><button type="button" data-action="cancel-providers">Cancel</button><button class="primary" type="submit">Save providers</button></footer>
+    <footer><button type="button" data-action="cancel-providers">Cancel</button><button type="button" class="danger" data-action="reset-onboarding">Reset first-time setup</button><button class="primary" type="submit">Save providers</button></footer>
+  </form>`;
+}
+
+function privacyConfirmationPanel() {
+  const resetting = privacyConfirmation?.kind === 'reset';
+  const provider = resetting ? null : state.providers.find((item) => item.id === privacyConfirmation?.providerId);
+  const name = provider?.name || 'this provider';
+  const title = resetting ? 'Reset first-time setup?' : `Disconnect ${name}?`;
+  const action = resetting ? 'Reset setup and sign out' : 'Disconnect account';
+  const explanation = resetting
+    ? 'This removes all local provider sessions, cookies, site storage, and connection settings. AI Widgets will return to provider selection on the next screen. No remote account settings are changed.'
+    : `This removes the local ${name} session, cookies, site storage, and connection settings. Shared social-login sessions (such as Google, Apple, or Microsoft) are not changed. The provider stays visible so its last saved usage can remain available. No remote account settings are changed.`;
+  const usageLabel = resetting ? 'Also delete all saved usage snapshots.' : `Also delete saved ${name} usage data.`;
+  return `<form id="privacy-confirmation" class="setup-panel privacy-confirmation"><h2>${escapeHtml(title)}</h2>
+    <p>${escapeHtml(explanation)}</p>
+    <label class="privacy-choice"><input type="checkbox" name="clear-usage" ${privacyConfirmation?.clearUsage ? 'checked' : ''} ${privacyConfirmation?.busy ? 'disabled' : ''}/><span>${escapeHtml(usageLabel)}</span></label>
+    ${privacyError ? `<p class="form-error">${escapeHtml(privacyError)}</p>` : ''}
+    <footer><button type="button" data-action="cancel-privacy" ${privacyConfirmation?.busy ? 'disabled' : ''}>Cancel</button><button class="danger" type="submit" ${privacyConfirmation?.busy ? 'disabled' : ''}>${privacyConfirmation?.busy ? 'Working…' : escapeHtml(action)}</button></footer>
   </form>`;
 }
 
@@ -113,7 +134,7 @@ function render() {
     ? '<button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>'
     : `<button data-action="providers">Providers</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
   app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">${onboarding ? 'First-time setup' : `Settings and connection · ${updated}`}</span><nav class="no-drag">${navigation}</nav></header>
-    ${onboarding ? onboardingPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
   requestAnimationFrame(() => {
     const height = Math.ceil(app.scrollHeight);
     if (height === lastRequestedHeight) return;
@@ -143,16 +164,49 @@ app.addEventListener('click', async (event) => {
   }
   if (action === 'minimize') return window.aiwidgets.minimize();
   if (action === 'close') return window.aiwidgets.close();
-  if (action === 'providers') { managingProviders = !managingProviders; integrating = false; setupProviderIds = null; return render(); }
+  if (action === 'providers') { managingProviders = !managingProviders; integrating = false; setupProviderIds = null; privacyConfirmation = null; return render(); }
   if (action === 'cancel-providers') { managingProviders = false; return render(); }
-  if (action === 'integrate') { integrating = !integrating; managingProviders = false; setupProviderIds = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
+  if (action === 'integrate') { integrating = !integrating; managingProviders = false; setupProviderIds = null; privacyConfirmation = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
   if (action === 'open-provider') { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.openProvider(target.dataset.provider, target.dataset.source); return render(); }
   if (action === 'refresh-providers') { await window.aiwidgets.refreshProviders(); return load(); }
+  if (action === 'disconnect-provider') {
+    privacyConfirmation = { kind: 'disconnect', providerId: event.target.closest('[data-provider]')?.dataset.provider, clearUsage: false, busy: false };
+    privacyError = '';
+    return render();
+  }
+  if (action === 'reset-onboarding') { privacyConfirmation = { kind: 'reset', clearUsage: false, busy: false }; privacyError = ''; return render(); }
+  if (action === 'cancel-privacy') { privacyConfirmation = null; privacyError = ''; return render(); }
+});
+
+app.addEventListener('change', (event) => {
+  if (event.target.name === 'clear-usage' && privacyConfirmation && !privacyConfirmation.busy) {
+    privacyConfirmation.clearUsage = event.target.checked;
+  }
 });
 
 app.addEventListener('submit', async (event) => {
-  if (!['provider-settings', 'onboarding'].includes(event.target.id)) return;
+  if (!['provider-settings', 'onboarding', 'privacy-confirmation'].includes(event.target.id)) return;
   event.preventDefault();
+  if (event.target.id === 'privacy-confirmation') {
+    if (!privacyConfirmation || privacyConfirmation.busy) return;
+    privacyConfirmation.clearUsage = event.target.querySelector('input[name="clear-usage"]')?.checked === true;
+    privacyConfirmation.busy = true;
+    render();
+    try {
+      state = privacyConfirmation.kind === 'reset'
+        ? await window.aiwidgets.resetOnboarding(privacyConfirmation.clearUsage)
+        : await window.aiwidgets.disconnectProvider(privacyConfirmation.providerId, privacyConfirmation.clearUsage);
+      privacyConfirmation = null;
+      privacyError = '';
+      integrating = false;
+      managingProviders = false;
+      return render();
+    } catch (error) {
+      privacyConfirmation.busy = false;
+      privacyError = `Could not complete this privacy action: ${error.message || String(error)}`;
+      return render();
+    }
+  }
   const providers = [...event.target.querySelectorAll('input[name="provider"]:checked')].map((input) => input.value);
   if (event.target.id === 'onboarding' && providers.length === 0) {
     onboardingError = 'Choose at least one provider to continue.';

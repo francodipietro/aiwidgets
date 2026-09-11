@@ -45,7 +45,7 @@ usuario desde su elección explícita hasta las acciones de login.
   cookies ni configuración reales.
 - [x] Confirmar localmente la transición “seleccionar → Continue to sign in”
   para una selección de proveedor, sin completar ningún login.
-- [ ] Abrir PR y resolver la revisión.
+- [x] Abrir PR y resolver la revisión.
 
 Criterio de aceptación: en un perfil vacío no hay tarjetas ni refresh de un
 proveedor hasta que el usuario lo selecciona; una instalación existente
@@ -84,11 +84,11 @@ valor es fresco y cómo recuperarlo cuando no lo sea.
 
 Objetivo: permitir salir de una cuenta de forma completa y comprensible.
 
-- [ ] Botón “Disconnect” por proveedor.
-- [ ] Borrar la partición aislada de cookies correspondiente y su configuración.
-- [ ] Elegir si se conservan o eliminan las métricas guardadas; explicarlo en
+- [x] Botón “Disconnect” por proveedor.
+- [x] Borrar la partición aislada de cookies correspondiente y su configuración.
+- [x] Elegir si se conservan o eliminan las métricas guardadas; explicarlo en
   la UI.
-- [ ] Añadir “Reset first-time setup” para volver al onboarding de forma
+- [x] Añadir “Reset first-time setup” para volver al onboarding de forma
   deliberada.
 
 Criterio de aceptación: cambiar de cuenta no reutiliza cookies ni datos de la

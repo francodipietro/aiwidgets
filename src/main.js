@@ -5,6 +5,7 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runUsageCli } from './usage-cli.mjs';
+import { normaliseCollector, withCollectorAttempt, withCollectorFailure, withCollectorSuccess } from './collector-health.mjs';
 import { DEFAULT_DATA, createFirstRunData, normaliseUsageData } from './usage-data.mjs';
 import { parseVisibleUsage } from './usage-parser.mjs';
 
@@ -63,6 +64,7 @@ let quitting = false;
 let refreshInFlight;
 let cliRefreshInFlight = false;
 const providerConnectionInFlight = new Set();
+const providerRefreshInFlight = new Map();
 const providerRetryTimers = new Map();
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
@@ -71,6 +73,7 @@ const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
 const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
+const automaticRefreshEnabled = process.env.AIWIDGETS_TEST_DISABLE_REFRESH !== '1';
 
 // Keep development first-run tests completely separate from the installed
 // application's data and the isolated provider browser sessions.
@@ -271,7 +274,11 @@ function setDesktopWidgetBounds(data) {
 }
 
 async function desktopWidgetState() {
-  return { data: await readData(), layout: { ...desktopLayout } };
+  return { data: await readData(), collector: await readCollector(), layout: { ...desktopLayout } };
+}
+
+async function readUiState() {
+  return { ...(await readData()), collector: await readCollector() };
 }
 
 async function refreshNativeWidgets() {
@@ -448,36 +455,11 @@ async function ensureDataFile() {
   return target;
 }
 
-function defaultCollector() {
-  const disconnected = () => ({ configured: false, url: null, lastSync: null, status: 'Not connected.' });
-  return {
-    providers: {
-      claude: disconnected(),
-      codex: disconnected(),
-      copilot: { premium: disconnected(), actions: disconnected() },
-    },
-  };
-}
-
 async function readCollector() {
   const target = collectorPath();
   let stored = {};
   try { stored = JSON.parse(await readFile(target, 'utf8')); } catch { /* First run. */ }
-  const defaults = defaultCollector();
-  const storedCopilot = stored.providers?.copilot || {};
-  const storedPremium = storedCopilot.premium && typeof storedCopilot.premium === 'object'
-    ? storedCopilot.premium
-    : storedCopilot;
-  const config = {
-    providers: {
-      claude: { ...defaults.providers.claude, ...(stored.providers?.claude || {}) },
-      codex: { ...defaults.providers.codex, ...(stored.providers?.codex || {}) },
-      copilot: {
-        premium: { ...defaults.providers.copilot.premium, ...storedPremium },
-        actions: { ...defaults.providers.copilot.actions, ...(storedCopilot.actions || {}) },
-      },
-    },
-  };
+  const config = normaliseCollector(stored);
   if (!(await fileExists(target))) await writeJson(target, config);
   return config;
 }
@@ -578,6 +560,17 @@ function isProviderOrigin(providerId, value) {
   } catch { return false; }
 }
 
+function isProviderAuthenticationUrl(providerId, value) {
+  try {
+    const url = new URL(value);
+    const pathAndHash = `${url.pathname}${url.hash}`;
+    if (providerId === 'codex') return url.hostname === 'auth.openai.com' || /\/(?:auth|login|oauth)(?:\/|$)/i.test(pathAndHash);
+    if (providerId === 'claude') return /\/(?:auth|login|oauth)(?:\/|$)/i.test(pathAndHash);
+    if (providerId === 'copilot') return url.hostname === 'github.com' && /\/(?:login|sessions?)(?:\/|$)/i.test(url.pathname);
+  } catch { /* Invalid URLs are handled by the caller's navigation error. */ }
+  return false;
+}
+
 function isCanonicalUsageUrl(providerId, value) {
   try {
     const url = new URL(value);
@@ -621,7 +614,7 @@ async function autoConnectCopilot(win) {
   }
   providerConnectionInFlight.add(key);
   try {
-    await setCollectorStatus('copilot', 'Reading Copilot usage from the signed-in GitHub account.', null, 'premium');
+    await recordCollectorAttempt('copilot', 'Reading Copilot usage from the signed-in GitHub account.', 'premium');
     const premium = await applyCollectedUsage('copilot', await extractSettledUsageText('copilot', win.webContents, 'premium'), 'premium');
     if (!premium.accepted) {
       await setCollectorStatus('copilot', 'Signed in; waiting for Copilot usage to finish loading.', null, 'premium');
@@ -631,25 +624,32 @@ async function autoConnectCopilot(win) {
     clearProviderRetry(key);
     await enableProvider('copilot');
     let config = await readCollector();
-    Object.assign(collectorEntry(config, 'copilot', 'premium'), { configured: true, url: win.webContents.getURL(), status: 'Copilot usage connected and updated automatically.', lastSync: new Date().toISOString() });
-    Object.assign(collectorEntry(config, 'copilot', 'actions'), { configured: true, url: sourceStartUrl('copilot', 'actions'), status: 'Reading Actions minutes.', lastSync: null });
+    const premiumEntry = collectorEntry(config, 'copilot', 'premium');
+    Object.assign(premiumEntry, withCollectorSuccess({ ...premiumEntry, configured: true, url: win.webContents.getURL() }, 'Copilot usage connected and updated automatically.'));
+    Object.assign(collectorEntry(config, 'copilot', 'actions'), { configured: true, url: sourceStartUrl('copilot', 'actions'), status: 'Reading Actions minutes.' });
     await writeCollector(config);
     notifyCollectorChanged();
 
-    const actionsWindow = createProviderWindow('copilot', false, 'actions');
-    await actionsWindow.loadURL(sourceStartUrl('copilot', 'actions'));
-    await selectProviderView('copilot', 'actions', actionsWindow.webContents);
-    const actions = await applyCollectedUsage('copilot', await extractSettledUsageText('copilot', actionsWindow.webContents, 'actions'), 'actions');
-    config = await readCollector();
-    const actionsEntry = collectorEntry(config, 'copilot', 'actions');
-    actionsEntry.status = actions.accepted ? 'Actions minutes connected and updated automatically.' : actions.reason;
-    actionsEntry.lastSync = actions.accepted ? new Date().toISOString() : null;
-    await writeCollector(config);
-    notifyCollectorChanged();
+    try {
+      await recordCollectorAttempt('copilot', 'Reading Actions minutes.', 'actions');
+      const actionsWindow = createProviderWindow('copilot', false, 'actions');
+      await actionsWindow.loadURL(sourceStartUrl('copilot', 'actions'));
+      await selectProviderView('copilot', 'actions', actionsWindow.webContents);
+      const actions = await applyCollectedUsage('copilot', await extractSettledUsageText('copilot', actionsWindow.webContents, 'actions'), 'actions');
+      config = await readCollector();
+      const actionsEntry = collectorEntry(config, 'copilot', 'actions');
+      Object.assign(actionsEntry, actions.accepted
+        ? withCollectorSuccess(actionsEntry, 'Actions minutes connected and updated automatically.')
+        : withCollectorFailure(actionsEntry, actions.reason, actions.reason));
+      await writeCollector(config);
+      notifyCollectorChanged();
+    } catch (error) {
+      await setCollectorFailure('copilot', error, `Could not read Actions minutes: ${error.message}`, 'actions');
+    }
     win.hide();
     showControlCenter();
   } catch (error) {
-    await setCollectorStatus('copilot', `Could not read GitHub billing: ${error.message}`, null, 'premium');
+    await setCollectorFailure('copilot', error, `Could not read GitHub billing: ${error.message}`, 'premium');
   } finally {
     providerConnectionInFlight.delete(key);
   }
@@ -669,19 +669,17 @@ async function autoConnectProvider(providerId, source, win) {
   }
   providerConnectionInFlight.add(key);
   try {
-    await setCollectorStatus(providerId, 'Reading usage from the signed-in account.', null, source);
+    await recordCollectorAttempt(providerId, 'Reading usage from the signed-in account.', source);
     const result = await applyCollectedUsage(providerId, await extractSettledUsageText(providerId, win.webContents, source), source);
     const config = await readCollector();
     const entry = collectorEntry(config, providerId, source);
     if (result.accepted) {
       clearProviderRetry(key);
       await enableProvider(providerId);
-      Object.assign(entry, {
+      Object.assign(entry, withCollectorSuccess({ ...entry,
         configured: true,
         url: win.webContents.getURL(),
-        status: 'Connected and updated automatically.',
-        lastSync: new Date().toISOString(),
-      });
+      }, 'Connected and updated automatically.'));
       await writeCollector(config);
       notifyCollectorChanged();
       win.hide();
@@ -693,7 +691,7 @@ async function autoConnectProvider(providerId, source, win) {
       scheduleProviderRetry(key, () => autoConnectProvider(providerId, source, win));
     }
   } catch (error) {
-    await setCollectorStatus(providerId, `Could not read usage yet: ${error.message}`, null, source);
+    await setCollectorFailure(providerId, error, `Could not read usage yet: ${error.message}`, source);
   } finally {
     providerConnectionInFlight.delete(key);
   }
@@ -740,14 +738,31 @@ async function extractUsageText(webContents) {
 async function setCollectorStatus(providerId, status, lastSync = null, source = 'default') {
   const config = await readCollector();
   const entry = collectorEntry(config, providerId, source);
-  entry.status = status;
-  if (lastSync) entry.lastSync = lastSync;
+  Object.assign(entry, lastSync ? withCollectorSuccess(entry, status, lastSync) : { ...entry, status });
   await writeCollector(config);
   notifyCollectorChanged();
   return config;
 }
 
-async function refreshPageProvider(providerId, source = 'default') {
+async function recordCollectorAttempt(providerId, status, source = 'default') {
+  const config = await readCollector();
+  const entry = collectorEntry(config, providerId, source);
+  Object.assign(entry, withCollectorAttempt(entry, status));
+  await writeCollector(config);
+  notifyCollectorChanged();
+  return config;
+}
+
+async function setCollectorFailure(providerId, error, status, source = 'default') {
+  const config = await readCollector();
+  const entry = collectorEntry(config, providerId, source);
+  Object.assign(entry, withCollectorFailure(entry, error, status));
+  await writeCollector(config);
+  notifyCollectorChanged();
+  return config;
+}
+
+async function refreshPageProviderNow(providerId, source = 'default') {
   const config = await readCollector();
   const entry = collectorEntry(config, providerId, source);
   if (!entry.configured || !entry.url) return config;
@@ -755,11 +770,29 @@ async function refreshPageProvider(providerId, source = 'default') {
   if (visible && !visible.isDestroyed() && visible.isVisible()) return config;
   const win = createProviderWindow(providerId, false, source);
   try {
+    await recordCollectorAttempt(providerId, 'Refreshing usage…', source);
     await win.loadURL(sourceUrl(providerId, source, entry));
+    if (isProviderAuthenticationUrl(providerId, win.webContents.getURL())) {
+      return setCollectorFailure(providerId, `Sign in to ${PROVIDERS[providerId].name} to refresh usage.`, 'Session expired; reconnect required.', source);
+    }
     await selectProviderView(providerId, source, win.webContents);
     const result = await applyCollectedUsage(providerId, await extractSettledUsageText(providerId, win.webContents, source), source);
-    return setCollectorStatus(providerId, result.accepted ? 'Updated automatically.' : result.reason, result.accepted ? new Date().toISOString() : null, source);
-  } catch (error) { return setCollectorStatus(providerId, `Could not update: ${error.message}`, null, source); }
+    return result.accepted
+      ? setCollectorStatus(providerId, 'Updated automatically.', new Date().toISOString(), source)
+      : setCollectorFailure(providerId, result.reason, result.reason, source);
+  } catch (error) { return setCollectorFailure(providerId, error, `Could not update: ${error.message}`, source); }
+}
+
+function refreshPageProvider(providerId, source = 'default') {
+  const key = `${providerId}:${source}`;
+  const active = providerRefreshInFlight.get(key);
+  if (active) return active;
+  const task = refreshPageProviderNow(providerId, source);
+  providerRefreshInFlight.set(key, task);
+  task.finally(() => {
+    if (providerRefreshInFlight.get(key) === task) providerRefreshInFlight.delete(key);
+  }).catch(() => {});
+  return task;
 }
 
 async function refreshCopilotProvider() {
@@ -905,8 +938,10 @@ app.whenReady().then(async () => {
   await ensureCliRefreshDirectories();
   await pruneCliRefreshResponses();
   await initialiseMacDesktopIntegration();
-  refreshAllProviders().catch(() => {});
-  setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
+  if (automaticRefreshEnabled) {
+    refreshAllProviders().catch(() => {});
+    setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
+  }
   setInterval(() => { setRuntimeHeartbeat().catch(() => {}); }, 5_000);
   processCliRefreshRequests().catch(() => {});
   setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);
@@ -930,13 +965,16 @@ app.on('before-quit', (event) => {
 });
 app.on('activate', showControlCenter);
 
-ipcMain.handle('usage:read', readData);
+ipcMain.handle('usage:read', readUiState);
 ipcMain.handle('providers:save-enabled', (_event, ids, completeOnboarding) => saveEnabledProviders(ids, completeOnboarding === true));
 ipcMain.handle('collector:info', readCollector);
 ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_IDS.includes(providerId)
   ? openProvider(providerId, normaliseProviderSource(providerId, source))
   : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.handle('collector:refresh', refreshAllProviders);
+ipcMain.handle('collector:refresh-provider', (_event, providerId) => PAGE_PROVIDER_IDS.includes(providerId)
+  ? refreshProvider(providerId)
+  : Promise.reject(new Error('Invalid page provider.')));
 ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());

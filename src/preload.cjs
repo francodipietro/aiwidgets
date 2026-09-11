@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('aiwidgets', {
   collectorInfo: () => ipcRenderer.invoke('collector:info'),
   openProvider: (providerId, source) => ipcRenderer.invoke('collector:open', providerId, source),
   refreshProviders: () => ipcRenderer.invoke('collector:refresh'),
+  refreshProvider: (providerId) => ipcRenderer.invoke('collector:refresh-provider', providerId),
   resizeControl: (height) => ipcRenderer.send('window:resize-control', height),
   minimize: () => ipcRenderer.invoke('window:minimize'),
   close: () => ipcRenderer.invoke('window:close'),

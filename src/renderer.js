@@ -1,3 +1,5 @@
+import { providerConnectionHealth } from './collector-health.mjs';
+
 const app = document.querySelector('#app');
 let state;
 let integrating = false;
@@ -51,10 +53,12 @@ const providerLogo = (id) => {
 const activeProviderIds = () => new Set(state.settings.enabledProviders);
 
 function card(provider) {
+  const health = providerConnectionHealth(state.collector, provider.id);
+  const reconnect = health.state === 'expired' ? ' <button class="health-action" data-action="integrate">Reconnect</button>' : '';
   return `<article class="card ${provider.id}" style="--accent:${escapeHtml(provider.accent)}">
-    <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1><button class="refresh" data-action="refresh" title="Refresh">↻</button></div>
+    <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1><button class="refresh" data-action="refresh-provider" data-provider="${provider.id}" title="Refresh ${escapeHtml(provider.name)}">↻</button></div>
     <div class="usage-row">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
-    <p class="note">${escapeHtml(provider.note || 'Updated from your local source.')}</p>
+    <p class="note health ${health.state}">${escapeHtml(health.message)}${reconnect}</p>
   </article>`;
 }
 
@@ -63,16 +67,16 @@ function integrationPanel(providerIds = ['claude', 'codex', 'copilot']) {
   if (!info) return '<section id="integration"><p>Loading account connection…</p></section>';
   const row = (id) => {
     const provider = info.providers[id];
+    const health = providerConnectionHealth(info, id);
     if (id === 'copilot') {
-      const status = [provider.premium, provider.actions].map((source) => source.status).find((value) => value && value !== 'Not connected.') || 'Not updated yet.';
       const lastSync = [provider.premium, provider.actions].map((source) => source.lastSync).filter(Boolean).sort().at(-1);
       const updated = lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(lastSync)) : 'not updated yet';
-      return `<article class="account-row"><div><h3>GitHub Copilot</h3><p>${escapeHtml(status)}</p><small>${provider.premium.configured ? `Connected GitHub account · ${updated}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="copilot" data-source="premium">${provider.premium.configured ? 'Reconnect GitHub' : 'Connect GitHub'}</button></div><small class="account-destination">Premium requests and Actions minutes</small></article>`;
+      return `<article class="account-row"><div><h3>GitHub Copilot</h3><p>${escapeHtml(health.message)}</p><small>${provider.premium.configured ? `Connected GitHub account · ${updated}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="copilot" data-source="premium">${provider.premium.configured ? 'Reconnect GitHub' : 'Connect GitHub'}</button></div><small class="account-destination">Premium requests and Actions minutes</small></article>`;
     }
     const lastSync = provider.lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(provider.lastSync)) : 'not updated yet';
     const name = state.providers.find((item) => item.id === id)?.name || id;
     const destination = 'Settings / Usage';
-    return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(provider.status)}</p><small>${provider.configured ? `Connected account · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">${provider.configured ? `Reconnect ${escapeHtml(name)}` : `Connect ${escapeHtml(name)}`}</button></div><small class="account-destination">${destination}</small></article>`;
+    return `<article class="account-row"><div><h3>${escapeHtml(name)}</h3><p>${escapeHtml(health.message)}</p><small>${provider.configured ? `Connected account · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="open-provider" data-provider="${id}">${provider.configured ? `Reconnect ${escapeHtml(name)}` : `Connect ${escapeHtml(name)}`}</button></div><small class="account-destination">${destination}</small></article>`;
   };
   const selectedSetup = setupProviderIds !== null;
   return `<section id="integration"><h2>${selectedSetup ? 'Connect selected accounts' : 'Connect subscriptions'}</h2>
@@ -126,20 +130,24 @@ async function load() {
   try {
     if (!window.aiwidgets) throw new Error('The Electron secure bridge did not load.');
     state = await window.aiwidgets.read();
-    if (integrating) state.collector = await window.aiwidgets.collectorInfo();
+    if (!state.collector || integrating) state.collector = await window.aiwidgets.collectorInfo();
     render();
   } catch (error) { showError(error); }
 }
 app.addEventListener('click', async (event) => {
   const action = event.target.closest('[data-action]')?.dataset.action;
-  if (action === 'refresh') { await window.aiwidgets.refreshProviders(); return load(); }
+  if (action === 'refresh-provider') {
+    const providerId = event.target.closest('[data-provider]')?.dataset.provider;
+    if (providerId) await window.aiwidgets.refreshProvider(providerId);
+    return load();
+  }
   if (action === 'minimize') return window.aiwidgets.minimize();
   if (action === 'close') return window.aiwidgets.close();
   if (action === 'providers') { managingProviders = !managingProviders; integrating = false; setupProviderIds = null; return render(); }
   if (action === 'cancel-providers') { managingProviders = false; return render(); }
   if (action === 'integrate') { integrating = !integrating; managingProviders = false; setupProviderIds = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
   if (action === 'open-provider') { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.openProvider(target.dataset.provider, target.dataset.source); return render(); }
-  if (action === 'refresh-providers') { state.collector = await window.aiwidgets.refreshProviders(); return render(); }
+  if (action === 'refresh-providers') { await window.aiwidgets.refreshProviders(); return load(); }
 });
 
 app.addEventListener('submit', async (event) => {

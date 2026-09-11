@@ -71,11 +71,11 @@ las tres fuentes y los casos de error principales.
 Objetivo: que el usuario pueda confiar en cada tarjeta sin adivinar la edad o
 el origen del dato.
 
-- [ ] Guardar último refresh exitoso, último intento y error normalizado por
+- [x] Guardar último refresh exitoso, último intento y error normalizado por
   proveedor.
-- [ ] Mostrar “Updated just now / 5 min ago”, estado vencido y error accionable.
-- [ ] Añadir reintento individual y reintento global sin abrir ventanas extra.
-- [ ] Distinguir “no conectado” de “sesión vencida” y “página cambió”.
+- [x] Mostrar “Updated just now / 5 min ago”, estado vencido y error accionable.
+- [x] Añadir reintento individual y reintento global sin abrir ventanas extra.
+- [x] Distinguir “no conectado” de “sesión vencida” y “página cambió”.
 
 Criterio de aceptación: cualquier tarjeta permite saber en un vistazo si su
 valor es fresco y cómo recuperarlo cuando no lo sea.

@@ -56,12 +56,12 @@ conserva sus proveedores activos y no muestra el onboarding.
 Objetivo: detectar cambios en las páginas de los proveedores antes de que
 lleguen a una versión publicada.
 
-- [ ] Extraer funciones puras de parsing de uso y fechas de reset.
-- [ ] Añadir fixtures anonimizados de Claude, Codex y GitHub Copilot.
-- [ ] Añadir pruebas para porcentajes, cuotas faltantes, fechas vencidas y
+- [x] Extraer funciones puras de parsing de uso y fechas de reset.
+- [x] Añadir fixtures anonimizados de Claude, Codex y GitHub Copilot.
+- [x] Añadir pruebas para porcentajes, cuotas faltantes, fechas vencidas y
   páginas parcialmente cargadas.
 - [ ] Añadir pruebas para la migración de datos anteriores al onboarding.
-- [ ] Incorporar `npm test` al checklist local.
+- [x] Incorporar `npm test` al checklist local.
 
 Criterio de aceptación: un cambio de parser no puede mergearse sin pruebas de
 las tres fuentes y los casos de error principales.

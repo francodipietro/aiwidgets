@@ -5,11 +5,12 @@ import { access } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runUsageCli } from './usage-cli.mjs';
-import { normaliseCollector, withCollectorAttempt, withCollectorFailure, withCollectorSuccess } from './collector-health.mjs';
-import { DEFAULT_DATA, createFirstRunData, normaliseUsageData } from './usage-data.mjs';
+import { defaultCollector, normaliseCollector, withCollectorAttempt, withCollectorFailure, withCollectorSuccess } from './collector-health.mjs';
+import { PROVIDER_SESSION_ORIGINS, isProviderAuthenticationUrl, isProviderOrigin } from './provider-origins.mjs';
+import { DEFAULT_DATA, createFirstRunData, disconnectUsageData, normaliseUsageData, resetFirstRunData } from './usage-data.mjs';
 import { parseVisibleUsage } from './usage-parser.mjs';
 
-const { app, BrowserWindow, ipcMain, nativeImage, screen, Tray } = electron;
+const { app, BrowserWindow, ipcMain, nativeImage, screen, session, Tray } = electron;
 const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
@@ -20,6 +21,7 @@ const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
+const SESSION_DATA_TYPES = ['cache', 'cookies', 'fileSystems', 'indexedDB', 'localStorage', 'serviceWorkers', 'webSQL'];
 const PROVIDERS = {
   codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
   claude: { name: 'Claude', startUrl: 'https://claude.ai/settings/usage' },
@@ -63,9 +65,12 @@ let applyingDesktopBounds = false;
 let quitting = false;
 let refreshInFlight;
 let cliRefreshInFlight = false;
-const providerConnectionInFlight = new Set();
+const providerConnectionInFlight = new Map();
+const providerOpenInFlight = new Map();
 const providerRefreshInFlight = new Map();
 const providerRetryTimers = new Map();
+const privacyProtectedProviders = new Set();
+let privacyOperation = Promise.resolve();
 // Launching the application from the desktop menu should show its settings.
 // Closing that window leaves the background collector running; the GNOME
 // extension remains the separate compact usage view in the top panel.
@@ -479,6 +484,103 @@ function normaliseProviderSource(providerId, source) {
   return 'default';
 }
 
+function providerSources(providerId) {
+  return providerId === 'copilot' ? ['premium', 'actions'] : ['default'];
+}
+
+async function closeProviderWindows(providerId) {
+  for (const source of providerSources(providerId)) {
+    const key = `${providerId}:${source}`;
+    clearProviderRetry(key);
+    const win = providerWindows.get(key);
+    if (win && !win.isDestroyed()) win.destroy();
+  }
+}
+
+async function clearProviderSession(providerId) {
+  const origins = PROVIDER_SESSION_ORIGINS[providerId];
+  if (!origins) throw new Error('Invalid page provider.');
+  // All providers historically shared this persistent partition. Restricting
+  // the clear to their origins removes their cookies and site storage without
+  // affecting the other providers' signed-in sessions.
+  await session.fromPartition(COLLECTOR_PARTITION).clearData({
+    dataTypes: SESSION_DATA_TYPES,
+    origins,
+    originMatchingMode: 'origin-in-all-contexts',
+  });
+}
+
+async function clearCollectorPartition() {
+  const collectorSession = session.fromPartition(COLLECTOR_PARTITION);
+  await collectorSession.clearData();
+  await collectorSession.clearAuthCache();
+  await collectorSession.clearHostResolverCache();
+}
+
+function isPrivacyProtected(providerId) {
+  return privacyProtectedProviders.has(providerId);
+}
+
+async function waitForProviderWork(providerIds) {
+  const keys = new Set(providerIds.flatMap((providerId) => providerSources(providerId).map((source) => `${providerId}:${source}`)));
+  const work = [
+    ...[...providerRefreshInFlight.entries()].filter(([key]) => keys.has(key)).map(([, task]) => task),
+    ...[...providerConnectionInFlight.entries()].filter(([key]) => keys.has(key)).map(([, task]) => task),
+    ...[...providerOpenInFlight.entries()].filter(([key]) => keys.has(key)).map(([, task]) => task),
+  ];
+  await Promise.allSettled(work);
+}
+
+function runPrivacyOperation(providerIds, operation) {
+  const task = privacyOperation.catch(() => {}).then(async () => {
+    providerIds.forEach((providerId) => privacyProtectedProviders.add(providerId));
+    try {
+      await Promise.all(providerIds.map(closeProviderWindows));
+      await waitForProviderWork(providerIds);
+      // A refresh that was already past its first protection check can finish
+      // its drain by creating a hidden window. Close once more before clearing
+      // session data so no live renderer can restore cookies or storage.
+      await Promise.all(providerIds.map(closeProviderWindows));
+      return await operation();
+    } finally {
+      providerIds.forEach((providerId) => privacyProtectedProviders.delete(providerId));
+    }
+  });
+  privacyOperation = task.catch(() => {});
+  return task;
+}
+
+async function disconnectProvider(providerId, clearUsage = false) {
+  if (!PAGE_PROVIDER_IDS.includes(providerId)) throw new Error('Invalid page provider.');
+  return runPrivacyOperation([providerId], async () => {
+    await clearProviderSession(providerId);
+    const collector = await readCollector();
+    const defaults = defaultCollector();
+    if (providerId === 'copilot') collector.providers.copilot = defaults.providers.copilot;
+    else collector.providers[providerId] = defaults.providers[providerId];
+    await writeCollector(collector);
+    const data = disconnectUsageData(await readData(), providerId, clearUsage);
+    data.updatedAt = new Date().toISOString();
+    await writeJson(await ensureDataFile(), data);
+    notifyCollectorChanged();
+    notifyUsageChanged();
+    return readUiState();
+  });
+}
+
+async function resetFirstTimeSetup(clearUsage = false) {
+  return runPrivacyOperation(PAGE_PROVIDER_IDS, async () => {
+    await clearCollectorPartition();
+    await writeCollector(defaultCollector());
+    const data = resetFirstRunData(await readData(), clearUsage);
+    data.updatedAt = new Date().toISOString();
+    await writeJson(await ensureDataFile(), data);
+    notifyCollectorChanged();
+    notifyUsageChanged();
+    return readUiState();
+  });
+}
+
 function sourceUrl(providerId, source, entry) {
   if (!entry.url) return sourceStartUrl(providerId, source);
   try {
@@ -550,27 +652,6 @@ async function extractSettledUsageText(providerId, webContents, source = 'defaul
   return latest;
 }
 
-function isProviderOrigin(providerId, value) {
-  try {
-    const url = new URL(value);
-    if (providerId === 'codex') return url.hostname === 'chatgpt.com';
-    if (providerId === 'claude') return url.hostname === 'claude.ai' || url.hostname === 'www.claude.ai';
-    if (providerId === 'copilot') return url.hostname === 'github.com';
-    return false;
-  } catch { return false; }
-}
-
-function isProviderAuthenticationUrl(providerId, value) {
-  try {
-    const url = new URL(value);
-    const pathAndHash = `${url.pathname}${url.hash}`;
-    if (providerId === 'codex') return url.hostname === 'auth.openai.com' || /\/(?:auth|login|oauth)(?:\/|$)/i.test(pathAndHash);
-    if (providerId === 'claude') return /\/(?:auth|login|oauth)(?:\/|$)/i.test(pathAndHash);
-    if (providerId === 'copilot') return url.hostname === 'github.com' && /\/(?:login|sessions?)(?:\/|$)/i.test(url.pathname);
-  } catch { /* Invalid URLs are handled by the caller's navigation error. */ }
-  return false;
-}
-
 function isCanonicalUsageUrl(providerId, value) {
   try {
     const url = new URL(value);
@@ -604,7 +685,7 @@ async function selectProviderView(providerId, source, webContents) {
 
 async function autoConnectCopilot(win) {
   const key = 'copilot:premium';
-  if (win.isDestroyed() || !win.isVisible() || providerConnectionInFlight.has(key)) return;
+  if (isPrivacyProtected('copilot') || win.isDestroyed() || !win.isVisible() || providerConnectionInFlight.has(key)) return;
   const currentUrl = win.webContents.getURL();
   if (!isCanonicalUsageUrl('copilot', currentUrl)) {
     if (isProviderOrigin('copilot', currentUrl) && !/\/(?:login|sessions?)(?:\/|$)/i.test(new URL(currentUrl).pathname)) {
@@ -612,7 +693,9 @@ async function autoConnectCopilot(win) {
     }
     return;
   }
-  providerConnectionInFlight.add(key);
+  let finishConnection;
+  const connection = new Promise((resolve) => { finishConnection = resolve; });
+  providerConnectionInFlight.set(key, connection);
   try {
     await recordCollectorAttempt('copilot', 'Reading Copilot usage from the signed-in GitHub account.', 'premium');
     const premium = await applyCollectedUsage('copilot', await extractSettledUsageText('copilot', win.webContents, 'premium'), 'premium');
@@ -652,12 +735,13 @@ async function autoConnectCopilot(win) {
     await setCollectorFailure('copilot', error, `Could not read GitHub billing: ${error.message}`, 'premium');
   } finally {
     providerConnectionInFlight.delete(key);
+    finishConnection();
   }
 }
 
 async function autoConnectProvider(providerId, source, win) {
   if (providerId === 'copilot') return autoConnectCopilot(win);
-  if (win.isDestroyed() || !win.isVisible()) return;
+  if (isPrivacyProtected(providerId) || win.isDestroyed() || !win.isVisible()) return;
   const key = `${providerId}:${source}`;
   if (providerConnectionInFlight.has(key)) return;
   const currentUrl = win.webContents.getURL();
@@ -667,7 +751,9 @@ async function autoConnectProvider(providerId, source, win) {
     }
     return;
   }
-  providerConnectionInFlight.add(key);
+  let finishConnection;
+  const connection = new Promise((resolve) => { finishConnection = resolve; });
+  providerConnectionInFlight.set(key, connection);
   try {
     await recordCollectorAttempt(providerId, 'Reading usage from the signed-in account.', source);
     const result = await applyCollectedUsage(providerId, await extractSettledUsageText(providerId, win.webContents, source), source);
@@ -694,10 +780,12 @@ async function autoConnectProvider(providerId, source, win) {
     await setCollectorFailure(providerId, error, `Could not read usage yet: ${error.message}`, source);
   } finally {
     providerConnectionInFlight.delete(key);
+    finishConnection();
   }
 }
 
 function createProviderWindow(providerId, show, source = 'default') {
+  if (isPrivacyProtected(providerId)) throw new Error('This provider is being disconnected.');
   const key = `${providerId}:${source}`;
   const existing = providerWindows.get(key);
   if (existing && !existing.isDestroyed()) return existing;
@@ -763,6 +851,7 @@ async function setCollectorFailure(providerId, error, status, source = 'default'
 }
 
 async function refreshPageProviderNow(providerId, source = 'default') {
+  if (isPrivacyProtected(providerId)) return readCollector();
   const config = await readCollector();
   const entry = collectorEntry(config, providerId, source);
   if (!entry.configured || !entry.url) return config;
@@ -784,6 +873,7 @@ async function refreshPageProviderNow(providerId, source = 'default') {
 }
 
 function refreshPageProvider(providerId, source = 'default') {
+  if (isPrivacyProtected(providerId)) return readCollector();
   const key = `${providerId}:${source}`;
   const active = providerRefreshInFlight.get(key);
   if (active) return active;
@@ -859,27 +949,41 @@ async function processCliRefreshRequests() {
 }
 
 async function openProvider(providerId, source = 'default') {
-  clearProviderRetry(`${providerId}:${source}`);
-  const config = await readCollector();
-  const entry = collectorEntry(config, providerId, source);
-  entry.status = `Sign in to ${PROVIDERS[providerId].name}; AI Widgets will connect automatically.`;
-  await writeCollector(config);
-  notifyCollectorChanged();
-  const win = createProviderWindow(providerId, true, source);
-  // Start a first-time Copilot connection at GitHub's explicit login URL.
-  // Afterwards sourceStartUrl handles the direct authenticated analytics URL.
-  const url = providerId === 'copilot' && !entry.configured
-    ? PROVIDERS.copilot.startUrl
-    : sourceUrl(providerId, source, entry);
-  // The did-finish-load handler can immediately advance an authenticated
-  // Copilot login from Billing to its analytics page. Electron reports that
-  // expected superseded navigation as ERR_ABORTED; it is not a failed login.
-  await win.loadURL(url).catch((error) => {
-    if (error?.code !== 'ERR_ABORTED') throw error;
-  });
-  win.show(); win.focus();
-  autoConnectProvider(providerId, source, win).catch(() => {});
-  return readCollector();
+  if (isPrivacyProtected(providerId)) throw new Error('This provider is being disconnected.');
+  const key = `${providerId}:${source}`;
+  const active = providerOpenInFlight.get(key);
+  if (active) return active;
+  const task = (async () => {
+    clearProviderRetry(key);
+    const config = await readCollector();
+    if (isPrivacyProtected(providerId)) return readCollector();
+    const entry = collectorEntry(config, providerId, source);
+    entry.status = `Sign in to ${PROVIDERS[providerId].name}; AI Widgets will connect automatically.`;
+    await writeCollector(config);
+    notifyCollectorChanged();
+    if (isPrivacyProtected(providerId)) return readCollector();
+    const win = createProviderWindow(providerId, true, source);
+    // Start a first-time Copilot connection at GitHub's explicit login URL.
+    // Afterwards sourceStartUrl handles the direct authenticated analytics URL.
+    const url = providerId === 'copilot' && !entry.configured
+      ? PROVIDERS.copilot.startUrl
+      : sourceUrl(providerId, source, entry);
+    // The did-finish-load handler can immediately advance an authenticated
+    // Copilot login from Billing to its analytics page. Electron reports that
+    // expected superseded navigation as ERR_ABORTED; it is not a failed login.
+    await win.loadURL(url).catch((error) => {
+      if (error?.code !== 'ERR_ABORTED') throw error;
+    });
+    if (isPrivacyProtected(providerId)) { if (!win.isDestroyed()) win.destroy(); return readCollector(); }
+    win.show(); win.focus();
+    autoConnectProvider(providerId, source, win).catch(() => {});
+    return readCollector();
+  })();
+  providerOpenInFlight.set(key, task);
+  task.finally(() => {
+    if (providerOpenInFlight.get(key) === task) providerOpenInFlight.delete(key);
+  }).catch(() => {});
+  return task;
 }
 
 function createWindow() {
@@ -975,6 +1079,8 @@ ipcMain.handle('collector:refresh', refreshAllProviders);
 ipcMain.handle('collector:refresh-provider', (_event, providerId) => PAGE_PROVIDER_IDS.includes(providerId)
   ? refreshProvider(providerId)
   : Promise.reject(new Error('Invalid page provider.')));
+ipcMain.handle('collector:disconnect', (_event, providerId, clearUsage) => disconnectProvider(providerId, clearUsage === true));
+ipcMain.handle('onboarding:reset', (_event, clearUsage) => resetFirstTimeSetup(clearUsage === true));
 ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());

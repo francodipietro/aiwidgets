@@ -20,6 +20,31 @@ export function createFirstRunData() {
   };
 }
 
+function disconnectedProvider(id) {
+  const fallback = DEFAULT_DATA.providers.find((provider) => provider.id === id);
+  return fallback ? { ...fallback } : null;
+}
+
+export function disconnectUsageData(raw, providerId, clearUsage = false) {
+  const data = normaliseUsageData(raw);
+  if (!PROVIDER_IDS.includes(providerId)) throw new Error('Invalid provider.');
+  return {
+    ...data,
+    providers: data.providers.map((provider) => clearUsage && provider.id === providerId
+      ? disconnectedProvider(providerId)
+      : provider),
+  };
+}
+
+export function resetFirstRunData(raw, clearUsage = false) {
+  const data = normaliseUsageData(raw);
+  return {
+    ...data,
+    settings: { ...data.settings, enabledProviders: [], onboardingComplete: false },
+    providers: clearUsage ? DEFAULT_DATA.providers.map((provider) => ({ ...provider })) : data.providers,
+  };
+}
+
 export function normaliseUsageData(raw) {
   const input = raw && typeof raw === 'object' ? raw : {};
   const rawProviders = Array.isArray(input.providers) ? input.providers : [];

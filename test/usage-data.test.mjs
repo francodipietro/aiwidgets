@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createFirstRunData, normaliseUsageData } from '../src/usage-data.mjs';
+import { createFirstRunData, disconnectUsageData, normaliseUsageData, resetFirstRunData } from '../src/usage-data.mjs';
 
 test('migrates a pre-onboarding profile without sending it through setup again', () => {
   const migrated = normaliseUsageData({
@@ -40,4 +40,37 @@ test('keeps explicit onboarding pending and discards invalid provider ids', () =
 
   assert.equal(normalised.settings.onboardingComplete, false);
   assert.deepEqual(normalised.settings.enabledProviders, ['claude', 'claude']);
+});
+
+test('disconnecting a provider preserves usage unless deletion is explicitly chosen', () => {
+  const source = {
+    settings: { enabledProviders: ['claude', 'codex'], onboardingComplete: true },
+    providers: [
+      { id: 'claude', session: { available: 64 }, weekly: { available: 41 } },
+      { id: 'codex', session: { available: 12 }, weekly: { available: 30 } },
+    ],
+  };
+
+  const kept = disconnectUsageData(source, 'claude');
+  const cleared = disconnectUsageData(source, 'claude', true);
+
+  assert.equal(kept.providers.find((provider) => provider.id === 'claude').session.available, 64);
+  assert.equal(cleared.providers.find((provider) => provider.id === 'claude').session, null);
+  assert.equal(cleared.providers.find((provider) => provider.id === 'codex').session.available, 12);
+  assert.equal(cleared.providers.find((provider) => provider.id === 'codex').weekly.available, 30);
+  assert.deepEqual(cleared.settings.enabledProviders, ['claude', 'codex']);
+});
+
+test('resetting first-time setup clears account selection and optionally stored usage', () => {
+  const source = {
+    settings: { enabledProviders: ['codex'], onboardingComplete: true },
+    providers: [{ id: 'codex', session: { available: 64 }, weekly: { available: 41 } }],
+  };
+
+  const kept = resetFirstRunData(source);
+  const cleared = resetFirstRunData(source, true);
+
+  assert.deepEqual(kept.settings, { refreshMinutes: 1, enabledProviders: [], onboardingComplete: false });
+  assert.equal(kept.providers.find((provider) => provider.id === 'codex').session.available, 64);
+  assert.equal(cleared.providers.find((provider) => provider.id === 'codex').session, null);
 });

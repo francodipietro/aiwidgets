@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('aiwidgets', {
   read: () => ipcRenderer.invoke('usage:read'),
-  saveEnabledProviders: (providerIds) => ipcRenderer.invoke('providers:save-enabled', providerIds),
+  saveEnabledProviders: (providerIds, completeOnboarding = false) => ipcRenderer.invoke('providers:save-enabled', providerIds, completeOnboarding),
   collectorInfo: () => ipcRenderer.invoke('collector:info'),
   openProvider: (providerId, source) => ipcRenderer.invoke('collector:open', providerId, source),
   refreshProviders: () => ipcRenderer.invoke('collector:refresh'),

@@ -33,7 +33,10 @@ const PROVIDERS = {
   },
 };
 const DEFAULT_DATA = {
-  settings: { refreshMinutes: 1, enabledProviders: ['claude', 'codex'] },
+  // Existing data files are considered set up unless they explicitly opt in
+  // to the first-run flow. New installations are created below with this
+  // flag disabled so no provider is selected by assumption.
+  settings: { refreshMinutes: 1, enabledProviders: [], onboardingComplete: true },
   providers: [
     { id: 'claude', name: 'Claude', accent: '#f2ae93', session: null, weekly: null, note: 'Not connected yet.' },
     { id: 'codex', name: 'Codex', accent: '#c9ddff', session: null, weekly: null, note: 'Not connected yet.' },
@@ -77,6 +80,10 @@ const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
 const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
+
+// Keep development first-run tests completely separate from the installed
+// application's data and the isolated provider browser sessions.
+if (process.env.AIWIDGETS_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.AIWIDGETS_TEST_USER_DATA));
 
 function clearProviderRetry(key) {
   const timer = providerRetryTimers.get(key);
@@ -444,7 +451,13 @@ async function requestQuit() {
 
 async function ensureDataFile() {
   const target = dataPath();
-  if (!(await fileExists(target))) await writeJson(target, DEFAULT_DATA);
+  if (!(await fileExists(target))) {
+    await writeJson(target, {
+      ...DEFAULT_DATA,
+      settings: { ...DEFAULT_DATA.settings, onboardingComplete: false },
+      providers: DEFAULT_DATA.providers.map((provider) => ({ ...provider })),
+    });
+  }
   return target;
 }
 
@@ -543,7 +556,19 @@ function normalise(raw) {
     : DEFAULT_DATA.settings.enabledProviders;
   // Refresh cadence is deliberately fixed at one minute. Older local files
   // may still contain five minutes, so do not let them retain that delay.
-  return { settings: { ...DEFAULT_DATA.settings, ...(input.settings || {}), refreshMinutes: 1, enabledProviders }, providers, updatedAt: input.updatedAt || null };
+  return {
+    settings: {
+      ...DEFAULT_DATA.settings,
+      ...(input.settings || {}),
+      refreshMinutes: 1,
+      enabledProviders,
+      // Data created before the onboarding feature already belongs to a user
+      // who has configured the app; only explicit false starts the setup.
+      onboardingComplete: input.settings?.onboardingComplete !== false,
+    },
+    providers,
+    updatedAt: input.updatedAt || null,
+  };
 }
 
 async function readData() {
@@ -552,10 +577,11 @@ async function readData() {
   catch (error) { return { ...normalise(DEFAULT_DATA), error: `Could not read ${target}: ${error.message}` }; }
 }
 
-async function saveEnabledProviders(ids) {
+async function saveEnabledProviders(ids, completeOnboarding = false) {
   if (!Array.isArray(ids)) throw new Error('Enabled providers must be an array.');
   const data = await readData();
   data.settings.enabledProviders = ids.filter((id) => Object.hasOwn(PROVIDERS, id));
+  if (completeOnboarding) data.settings.onboardingComplete = true;
   data.updatedAt = new Date().toISOString();
   await writeJson(await ensureDataFile(), data);
   notifyUsageChanged();
@@ -1108,7 +1134,7 @@ app.on('before-quit', (event) => {
 app.on('activate', showControlCenter);
 
 ipcMain.handle('usage:read', readData);
-ipcMain.handle('providers:save-enabled', (_event, ids) => saveEnabledProviders(ids));
+ipcMain.handle('providers:save-enabled', (_event, ids, completeOnboarding) => saveEnabledProviders(ids, completeOnboarding === true));
 ipcMain.handle('collector:info', readCollector);
 ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_IDS.includes(providerId)
   ? openProvider(providerId, normaliseProviderSource(providerId, source))

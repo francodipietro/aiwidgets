@@ -72,6 +72,7 @@ const openSettingsOnStart = !process.argv.includes('--background');
 const providerWindows = new Map();
 const quitRequested = process.argv.includes('--quit');
 const usageCliRequested = process.argv.includes('usage') || process.argv.includes('--usage');
+const automaticRefreshEnabled = process.env.AIWIDGETS_TEST_DISABLE_REFRESH !== '1';
 
 // Keep development first-run tests completely separate from the installed
 // application's data and the isolated provider browser sessions.
@@ -272,7 +273,11 @@ function setDesktopWidgetBounds(data) {
 }
 
 async function desktopWidgetState() {
-  return { data: await readData(), layout: { ...desktopLayout } };
+  return { data: await readData(), collector: await readCollector(), layout: { ...desktopLayout } };
+}
+
+async function readUiState() {
+  return { ...(await readData()), collector: await readCollector() };
 }
 
 async function refreshNativeWidgets() {
@@ -906,8 +911,10 @@ app.whenReady().then(async () => {
   await ensureCliRefreshDirectories();
   await pruneCliRefreshResponses();
   await initialiseMacDesktopIntegration();
-  refreshAllProviders().catch(() => {});
-  setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
+  if (automaticRefreshEnabled) {
+    refreshAllProviders().catch(() => {});
+    setInterval(() => { refreshAllProviders().catch(() => {}); }, 60_000);
+  }
   setInterval(() => { setRuntimeHeartbeat().catch(() => {}); }, 5_000);
   processCliRefreshRequests().catch(() => {});
   setInterval(() => { processCliRefreshRequests().catch(() => {}); }, 500);
@@ -931,7 +938,7 @@ app.on('before-quit', (event) => {
 });
 app.on('activate', showControlCenter);
 
-ipcMain.handle('usage:read', readData);
+ipcMain.handle('usage:read', readUiState);
 ipcMain.handle('providers:save-enabled', (_event, ids, completeOnboarding) => saveEnabledProviders(ids, completeOnboarding === true));
 ipcMain.handle('collector:info', readCollector);
 ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_IDS.includes(providerId)

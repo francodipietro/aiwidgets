@@ -1,3 +1,5 @@
+import { providerConnectionHealth } from './collector-health.mjs';
+
 const root = document.querySelector('#widget-app');
 const surface = new URLSearchParams(location.search).get('surface') || 'desktop';
 let state;
@@ -37,10 +39,11 @@ function quota(usage, label, unit = '') {
 
 function card(provider, id, panel) {
   const name = provider?.name || providerName(id);
+  const health = providerConnectionHealth(state.collector, id);
   const blocks = id === 'copilot'
     ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests', 'requests')}${quota(provider?.actionsMinutes, 'Actions minutes', 'min')}`
     : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
-  const note = panel ? '' : `<div class="widget-note">${escapeHtml(provider?.note || 'No data.')}</div>`;
+  const note = `<div class="widget-note health-${health.state}">${escapeHtml(health.message)}</div>`;
   return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
 }
 

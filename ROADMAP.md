@@ -73,7 +73,7 @@ el origen del dato.
 
 - [x] Guardar último refresh exitoso, último intento y error normalizado por
   proveedor.
-- [ ] Mostrar “Updated just now / 5 min ago”, estado vencido y error accionable.
+- [x] Mostrar “Updated just now / 5 min ago”, estado vencido y error accionable.
 - [ ] Añadir reintento individual y reintento global sin abrir ventanas extra.
 - [ ] Distinguir “no conectado” de “sesión vencida” y “página cambió”.
 

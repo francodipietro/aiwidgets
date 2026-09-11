@@ -88,3 +88,37 @@ export function withCollectorFailure(entry, error, status, now) {
     status,
   };
 }
+
+const staleAfterMs = 5 * 60_000;
+
+function relativeAge(timestamp, now) {
+  const elapsed = Math.max(0, now - Date.parse(timestamp));
+  if (elapsed < 60_000) return 'just now';
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} hr${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+export function providerConnectionHealth(collector, providerId, now = Date.now()) {
+  const providers = collector?.providers || {};
+  const sourceEntries = providerId === 'copilot'
+    ? [['Premium requests', providers.copilot?.premium], ['Actions minutes', providers.copilot?.actions]]
+    : [[providerId, providers[providerId]]];
+  const entries = sourceEntries.map(([source, entry]) => [source, normaliseCollectorEntry(entry)]);
+  const failed = entries.find(([, entry]) => entry.error);
+  if (failed) {
+    const [source, entry] = failed;
+    return { state: 'error', message: `${source}: ${entry.error.message}` };
+  }
+  if (entries.every(([, entry]) => !entry.configured)) return { state: 'disconnected', message: 'Not connected yet.' };
+  const pending = entries.find(([, entry]) => entry.configured && !entry.lastSuccess);
+  if (pending) return { state: 'pending', message: `Waiting for ${pending[0]} to update.` };
+  const oldestSuccess = Math.min(...entries.map(([, entry]) => Date.parse(entry.lastSuccess)).filter(Number.isFinite));
+  if (!Number.isFinite(oldestSuccess)) return { state: 'pending', message: 'Waiting for the first update.' };
+  const age = now - oldestSuccess;
+  const message = `Updated ${relativeAge(new Date(oldestSuccess).toISOString(), now)}`;
+  return age > staleAfterMs ? { state: 'stale', message: `Update is stale · ${message}` } : { state: 'fresh', message };
+}

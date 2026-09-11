@@ -33,9 +33,9 @@ const PROVIDERS = {
   },
 };
 const DEFAULT_DATA = {
-  // Existing data files are considered set up unless they explicitly opt in
-  // to the first-run flow. New installations are created below with this
-  // flag disabled so no provider is selected by assumption.
+  // Existing data files are considered set up unless they explicitly retain
+  // the first-run flag. ensureDataFile() sets it to false only for a new
+  // installation, so no provider is selected by assumption.
   settings: { refreshMinutes: 1, enabledProviders: [], onboardingComplete: true },
   providers: [
     { id: 'claude', name: 'Claude', accent: '#f2ae93', session: null, weekly: null, note: 'Not connected yet.' },

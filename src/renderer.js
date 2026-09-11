@@ -109,7 +109,7 @@ function render() {
     ? '<button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>'
     : `<button data-action="providers">Providers</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
   app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">${onboarding ? 'First-time setup' : `Settings and connection · ${updated}`}</span><nav class="no-drag">${navigation}</nav></header>
-    ${onboarding ? onboardingPanel() : integrating ? integrationPanel(setupProviderIds || undefined) : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+    ${onboarding ? onboardingPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
   requestAnimationFrame(() => {
     const height = Math.ceil(app.scrollHeight);
     if (height === lastRequestedHeight) return;
@@ -151,13 +151,22 @@ app.addEventListener('submit', async (event) => {
     return render();
   }
   const completingOnboarding = event.target.id === 'onboarding';
-  state = await window.aiwidgets.saveEnabledProviders(providers, completingOnboarding);
-  onboardingError = '';
-  setupProviderIds = completingOnboarding ? providers : null;
-  managingProviders = false;
-  integrating = completingOnboarding;
-  if (integrating) state.collector = await window.aiwidgets.collectorInfo();
-  render();
+  try {
+    state = await window.aiwidgets.saveEnabledProviders(providers, completingOnboarding);
+    onboardingError = '';
+    setupProviderIds = completingOnboarding ? providers : null;
+    managingProviders = false;
+    integrating = completingOnboarding;
+    if (integrating) state.collector = await window.aiwidgets.collectorInfo();
+    render();
+  } catch (error) {
+    if (completingOnboarding) {
+      onboardingError = `Could not save your provider selection: ${error.message || String(error)}`;
+      render();
+      return;
+    }
+    showError(error);
+  }
 });
 
 load().then(() => {

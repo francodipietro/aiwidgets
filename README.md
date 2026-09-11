@@ -107,6 +107,7 @@ aiwidgets usage --no-refresh
 ## Validation and packaging
 
 ```bash
+npm test
 npm run check
 npm run package:linux
 npm run package:mac

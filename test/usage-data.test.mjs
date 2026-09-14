@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DEFAULT_ALERT_SETTINGS } from '../src/alerts.mjs';
 import { createFirstRunData, disconnectUsageData, normaliseUsageData, resetFirstRunData } from '../src/usage-data.mjs';
 
 test('migrates a pre-onboarding profile without sending it through setup again', () => {
@@ -16,6 +17,8 @@ test('migrates a pre-onboarding profile without sending it through setup again',
     refreshMinutes: 1,
     enabledProviders: ['claude', 'codex'],
     onboardingComplete: true,
+    // A profile written before alerts existed adopts them switched off.
+    alerts: DEFAULT_ALERT_SETTINGS,
   });
   assert.equal(migrated.providers[0].session.available, 73);
   assert.equal(migrated.providers[1].model, undefined);
@@ -29,6 +32,7 @@ test('creates a new profile with no providers and onboarding pending', () => {
     refreshMinutes: 1,
     enabledProviders: [],
     onboardingComplete: false,
+    alerts: DEFAULT_ALERT_SETTINGS,
   });
   assert.deepEqual(created.providers.map(({ id }) => id), ['claude', 'codex', 'copilot']);
 });
@@ -70,7 +74,8 @@ test('resetting first-time setup clears account selection and optionally stored 
   const kept = resetFirstRunData(source);
   const cleared = resetFirstRunData(source, true);
 
-  assert.deepEqual(kept.settings, { refreshMinutes: 1, enabledProviders: [], onboardingComplete: false });
+  // Returning to onboarding also returns alert preferences to silent.
+  assert.deepEqual(kept.settings, { refreshMinutes: 1, enabledProviders: [], onboardingComplete: false, alerts: DEFAULT_ALERT_SETTINGS });
   assert.equal(kept.providers.find((provider) => provider.id === 'codex').session.available, 64);
   assert.equal(cleared.providers.find((provider) => provider.id === 'codex').session, null);
 });

@@ -98,7 +98,7 @@ export function withCollectorFailure(entry, error, status, now) {
 
 const staleAfterMs = 5 * 60_000;
 
-function relativeAge(timestamp, now) {
+export function relativeAge(timestamp, now) {
   const elapsed = Math.max(0, now - Date.parse(timestamp));
   if (elapsed < 60_000) return 'just now';
   const minutes = Math.floor(elapsed / 60_000);

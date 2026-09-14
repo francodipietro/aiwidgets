@@ -13,7 +13,7 @@
     "dev:linux": "env -u ELECTRON_RUN_AS_NODE electron --no-sandbox . --dev",
     "usage": "env -u ELECTRON_RUN_AS_NODE electron . usage",
     "usage:linux": "env -u ELECTRON_RUN_AS_NODE electron --no-sandbox . usage",
-    "check": "node --check src/main.js && node --check src/usage-cli.mjs && node --check src/collector-health.mjs && node --check src/provider-origins.mjs && node --check src/usage-data.mjs && node --check src/usage-parser.mjs && node --check src/preload.cjs && node --check src/renderer.js && node --check src/widget-preload.cjs && node --check src/widget.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
+    "check": "node --check src/main.js && node --check src/usage-cli.mjs && node --check src/alerts.mjs && node --check src/collector-health.mjs && node --check src/provider-origins.mjs && node --check src/usage-data.mjs && node --check src/usage-parser.mjs && node --check src/preload.cjs && node --check src/renderer.js && node --check src/widget-preload.cjs && node --check src/widget.js && node --check scripts/aiwidgets-usage.mjs && node --check scripts/package-deb.mjs",
     "test": "node --test test/*.test.mjs",
     "package:linux": "electron-builder --linux AppImage && node scripts/package-deb.mjs",
     "package:gnome": "cd gnome-extension/aiwidgets@fdipietro.dev && rm -f ../../dist/aiwidgets-gnome-shell.zip && zip -j ../../dist/aiwidgets-gnome-shell.zip metadata.json extension.js stylesheet.css ../../imgs/logo_chatgpt.svg ../../imgs/logo_claude.svg ../../imgs/logo_copilot.png",

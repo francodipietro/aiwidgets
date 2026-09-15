@@ -1,5 +1,6 @@
 import { providerConnectionHealth } from './collector-health.mjs';
 import { FAILING_HEALTH_STATES, FAILURE_MINUTES_CHOICES, PROVIDER_QUOTAS, parseResetLabel } from './alerts.mjs';
+import { RETENTION_DAYS_CHOICES, minMax, sparklineGeometry } from './history.mjs';
 
 const app = document.querySelector('#app');
 let state;
@@ -14,6 +15,8 @@ let alertsSupported = true;
 // Held while the panel is open so a background refresh re-rendering the form
 // cannot quietly revert a choice the user has made but not saved yet.
 let alertDraft = null;
+let managingHistory = false;
+let historyStatus = '';
 let timer;
 let lastRequestedHeight;
 
@@ -142,19 +145,79 @@ function alertPanel() {
   </form>`;
 }
 
+// A compact, axis-less trend line: x is spaced by real elapsed time (not by
+// sample index), so an uneven gap between two readings — the app closed for a
+// week, say — reads as a long flat stretch instead of being silently
+// compressed to the same width as any other step. Hit circles are sized to
+// the accessibility floor (>=24px) even though the visible marks are much
+// smaller, and carry a native <title> so the exact reading and time are
+// reachable on hover without any custom tooltip code. The geometry itself
+// (the real-time axis, the flat-line and zero-span guards, downsampling)
+// lives in history.mjs, where it can be tested without a DOM; this function
+// only turns that geometry into markup.
+function sparkline(points, accent) {
+  const geo = sparklineGeometry(points);
+  if (!geo) return '<p class="history-empty">Not enough data yet.</p>';
+  const { width, height, padX, padY, coords, last, totalCount } = geo;
+  const dateFormat = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  const line = coords.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ');
+  const area = `${padX.toFixed(1)},${(height - padY).toFixed(1)} ${line} ${(width - padX).toFixed(1)},${(height - padY).toFixed(1)}`;
+  const dots = coords.map((point) => `<circle class="history-hit" cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="12"><title>${escapeHtml(dateFormat.format(new Date(point.t)))} — ${point.v}%</title></circle>`).join('');
+  return `<svg class="sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Trend over ${totalCount} readings, currently ${last.v}%">
+    <polygon class="history-area" points="${area}" fill="${escapeHtml(accent)}" />
+    <polyline class="history-line" points="${line}" fill="none" stroke="${escapeHtml(accent)}" />
+    <circle class="history-end" cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="4" fill="${escapeHtml(accent)}" stroke="#141822" stroke-width="2" />
+    ${dots}
+  </svg>`;
+}
+
+function historyQuotaCard(quota, points) {
+  const last = points.at(-1);
+  const range = points.length >= 2 ? (() => { const { min, max } = minMax(points.map((point) => point.v)); return `<small class="history-range">${min}%–${max}% over ${points.length} readings</small>`; })() : '';
+  return `<div class="history-quota">
+    <div class="history-quota-head"><b>${escapeHtml(quota.label)}</b>${last ? `<strong>${last.v}%</strong>` : ''}</div>
+    ${sparkline(points, 'var(--accent)')}
+    ${range}
+  </div>`;
+}
+
+function historyPanel() {
+  const history = state.history || { retentionDays: 30, samples: {} };
+  const providerRows = state.providers
+    .filter((provider) => activeProviderIds().has(provider.id))
+    .map((provider) => {
+      const quotas = PROVIDER_QUOTAS[provider.id] || [];
+      const rows = quotas.map((quota) => historyQuotaCard(quota, history.samples[`${provider.id}.${quota.key}`] || [])).join('');
+      return `<article class="history-provider" style="--accent:${escapeHtml(provider.accent)}"><h3>${providerLogo(provider.id)}${escapeHtml(provider.name)}</h3><div class="history-quotas">${rows}</div></article>`;
+    }).join('');
+  return `<section id="history" class="setup-panel"><h2>Usage history</h2>
+    <p>A local record of how each quota has moved over time, kept only on this machine. A reading is added whenever a value changes, so the file stays small; nothing is sent anywhere.</p>
+    <label class="history-retention"><span>Keep history for</span><select name="history-retention">
+      ${RETENTION_DAYS_CHOICES.map((days) => `<option value="${days}" ${history.retentionDays === days ? 'selected' : ''}>${days} days</option>`).join('')}
+    </select></label>
+    ${history.error ? `<p class="form-error">${escapeHtml(history.error)} — showing what could still be read; nothing has been overwritten.</p>` : ''}
+    ${providerRows || '<p class="empty-state">No providers selected.</p>'}
+    ${historyStatus ? `<p class="alert-note">${escapeHtml(historyStatus)}</p>` : ''}
+    <footer><button type="button" data-action="close-history">Close</button><button type="button" data-action="export-history">Export as JSON…</button><button type="button" class="danger" data-action="clear-history">Clear history</button></footer>
+  </section>`;
+}
+
 function privacyConfirmationPanel() {
   const resetting = privacyConfirmation?.kind === 'reset';
-  const provider = resetting ? null : state.providers.find((item) => item.id === privacyConfirmation?.providerId);
+  const clearingHistory = privacyConfirmation?.kind === 'clear-history';
+  const provider = resetting || clearingHistory ? null : state.providers.find((item) => item.id === privacyConfirmation?.providerId);
   const name = provider?.name || 'this provider';
-  const title = resetting ? 'Reset first-time setup?' : `Disconnect ${name}?`;
-  const action = resetting ? 'Reset setup and sign out' : 'Disconnect account';
-  const explanation = resetting
+  const title = clearingHistory ? 'Clear usage history?' : resetting ? 'Reset first-time setup?' : `Disconnect ${name}?`;
+  const action = clearingHistory ? 'Clear history' : resetting ? 'Reset setup and sign out' : 'Disconnect account';
+  const explanation = clearingHistory
+    ? 'This permanently deletes the local trend history for every provider. Current usage, connections, and alerts are not affected.'
+    : resetting
     ? 'This removes all local provider sessions, cookies, site storage, and connection settings. AI Widgets will return to provider selection on the next screen. No remote account settings are changed.'
     : `This removes the local ${name} session, cookies, site storage, and connection settings. Shared social-login sessions (such as Google, Apple, or Microsoft) are not changed. The provider stays visible so its last saved usage can remain available. No remote account settings are changed.`;
   const usageLabel = resetting ? 'Also delete all saved usage snapshots.' : `Also delete saved ${name} usage data.`;
   return `<form id="privacy-confirmation" class="setup-panel privacy-confirmation"><h2>${escapeHtml(title)}</h2>
     <p>${escapeHtml(explanation)}</p>
-    <label class="privacy-choice"><input type="checkbox" name="clear-usage" ${privacyConfirmation?.clearUsage ? 'checked' : ''} ${privacyConfirmation?.busy ? 'disabled' : ''}/><span>${escapeHtml(usageLabel)}</span></label>
+    ${clearingHistory ? '' : `<label class="privacy-choice"><input type="checkbox" name="clear-usage" ${privacyConfirmation?.clearUsage ? 'checked' : ''} ${privacyConfirmation?.busy ? 'disabled' : ''}/><span>${escapeHtml(usageLabel)}</span></label>`}
     ${privacyError ? `<p class="form-error">${escapeHtml(privacyError)}</p>` : ''}
     <footer><button type="button" data-action="cancel-privacy" ${privacyConfirmation?.busy ? 'disabled' : ''}>Cancel</button><button class="danger" type="submit" ${privacyConfirmation?.busy ? 'disabled' : ''}>${privacyConfirmation?.busy ? 'Working…' : escapeHtml(action)}</button></footer>
   </form>`;
@@ -167,9 +230,9 @@ function render() {
   const visibleProviders = state.providers.filter((provider) => activeProviderIds().has(provider.id));
   const navigation = onboarding
     ? '<button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>'
-    : `<button data-action="providers">Providers</button><button data-action="alerts">Alerts</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
+    : `<button data-action="providers">Providers</button><button data-action="alerts">Alerts</button><button data-action="history">History</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
   app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">${onboarding ? 'First-time setup' : `Settings and connection · ${updated}`}</span><nav class="no-drag">${navigation}</nav></header>
-    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : managingAlerts ? alertPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : managingAlerts ? alertPanel() : managingHistory ? historyPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
   requestAnimationFrame(() => {
     const height = Math.ceil(app.scrollHeight);
     if (height === lastRequestedHeight) return;
@@ -199,10 +262,10 @@ app.addEventListener('click', async (event) => {
   }
   if (action === 'minimize') return window.aiwidgets.minimize();
   if (action === 'close') return window.aiwidgets.close();
-  if (action === 'providers') { managingProviders = !managingProviders; integrating = false; managingAlerts = false; setupProviderIds = null; privacyConfirmation = null; return render(); }
+  if (action === 'providers') { managingProviders = !managingProviders; integrating = false; managingAlerts = false; managingHistory = false; setupProviderIds = null; privacyConfirmation = null; return render(); }
   if (action === 'cancel-providers') { managingProviders = false; return render(); }
   if (action === 'alerts') {
-    managingAlerts = !managingAlerts; managingProviders = false; integrating = false; setupProviderIds = null; privacyConfirmation = null;
+    managingAlerts = !managingAlerts; managingProviders = false; integrating = false; managingHistory = false; setupProviderIds = null; privacyConfirmation = null;
     alertDraft = managingAlerts ? structuredClone(state.settings.alerts) : null;
     if (managingAlerts) alertsSupported = await window.aiwidgets.alertsSupported();
     return render();
@@ -213,7 +276,18 @@ app.addEventListener('click', async (event) => {
     if (providerId) state = await window.aiwidgets.silenceAlerts(providerId);
     return render();
   }
-  if (action === 'integrate') { integrating = !integrating; managingProviders = false; managingAlerts = false; setupProviderIds = null; privacyConfirmation = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
+  if (action === 'history') {
+    managingHistory = !managingHistory; managingProviders = false; managingAlerts = false; integrating = false; setupProviderIds = null; privacyConfirmation = null; historyStatus = '';
+    return render();
+  }
+  if (action === 'close-history') { managingHistory = false; historyStatus = ''; return render(); }
+  if (action === 'export-history') {
+    const result = await window.aiwidgets.exportHistory();
+    historyStatus = result.exported ? `Exported to ${result.filePath}.` : '';
+    return render();
+  }
+  if (action === 'clear-history') { privacyConfirmation = { kind: 'clear-history', busy: false }; privacyError = ''; return render(); }
+  if (action === 'integrate') { integrating = !integrating; managingProviders = false; managingAlerts = false; managingHistory = false; setupProviderIds = null; privacyConfirmation = null; if (integrating) state.collector = await window.aiwidgets.collectorInfo(); return render(); }
   if (action === 'open-provider') { const target = event.target.closest('[data-provider]'); state.collector = await window.aiwidgets.openProvider(target.dataset.provider, target.dataset.source); return render(); }
   if (action === 'refresh-providers') { await window.aiwidgets.refreshProviders(); return load(); }
   if (action === 'disconnect-provider') {
@@ -225,9 +299,16 @@ app.addEventListener('click', async (event) => {
   if (action === 'cancel-privacy') { privacyConfirmation = null; privacyError = ''; return render(); }
 });
 
-app.addEventListener('change', (event) => {
+app.addEventListener('change', async (event) => {
   if (event.target.name === 'clear-usage' && privacyConfirmation && !privacyConfirmation.busy) {
     privacyConfirmation.clearUsage = event.target.checked;
+  }
+  if (event.target.name === 'history-retention') {
+    // A single control with no other fields on the panel: applied right away
+    // rather than staged like the multi-field alert form, so there is no
+    // separate "unsaved" state to protect from a background refresh.
+    state = await window.aiwidgets.saveHistoryRetention(Number(event.target.value));
+    return render();
   }
   if (!alertDraft) return;
   if (event.target.name === 'alert-provider') alertDraft.providers[event.target.value] = { enabled: event.target.checked };
@@ -248,14 +329,21 @@ app.addEventListener('submit', async (event) => {
     privacyConfirmation.clearUsage = event.target.querySelector('input[name="clear-usage"]')?.checked === true;
     privacyConfirmation.busy = true;
     render();
+    const returningToHistory = privacyConfirmation.kind === 'clear-history';
     try {
-      state = privacyConfirmation.kind === 'reset'
+      state = returningToHistory
+        ? await window.aiwidgets.clearHistory()
+        : privacyConfirmation.kind === 'reset'
         ? await window.aiwidgets.resetOnboarding(privacyConfirmation.clearUsage)
         : await window.aiwidgets.disconnectProvider(privacyConfirmation.providerId, privacyConfirmation.clearUsage);
       privacyConfirmation = null;
       privacyError = '';
+      // Clearing history is opened from the history panel itself; land back
+      // on it (now empty) instead of the disconnect/reset flows' default of
+      // returning to the main card view.
       integrating = false;
       managingProviders = false;
+      managingHistory = returningToHistory;
       return render();
     } catch (error) {
       privacyConfirmation.busy = false;

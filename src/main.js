@@ -8,10 +8,11 @@ import { runUsageCli } from './usage-cli.mjs';
 import { defaultCollector, normaliseCollector, withCollectorAttempt, withCollectorFailure, withCollectorSuccess } from './collector-health.mjs';
 import { PROVIDER_SESSION_ORIGINS, isProviderAuthenticationUrl, isProviderOrigin } from './provider-origins.mjs';
 import { alertNotification, normaliseAlertState, pendingFailureAlerts, pendingUsageAlerts, settleProviderAlerts, silenceFailureAlert } from './alerts.mjs';
+import { forgetProviderHistory, normaliseHistory, recordHistorySamples, setRetentionDays } from './history.mjs';
 import { DEFAULT_DATA, createFirstRunData, disconnectUsageData, normaliseUsageData, resetFirstRunData } from './usage-data.mjs';
 import { parseVisibleUsage } from './usage-parser.mjs';
 
-const { app, BrowserWindow, Notification, ipcMain, nativeImage, screen, session, Tray } = electron;
+const { app, BrowserWindow, Notification, dialog, ipcMain, nativeImage, screen, session, Tray } = electron;
 const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
@@ -19,6 +20,7 @@ const RUNTIME_FILE = 'runtime.json';
 const DESKTOP_LAYOUT_FILE = 'desktop-widget.json';
 const HEARTBEAT_FILE = 'collector-heartbeat.json';
 const ALERTS_FILE = 'alerts.json';
+const HISTORY_FILE = 'history.json';
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -132,6 +134,7 @@ function cliRefreshResponseDirectory() { return path.join(app.getPath('userData'
 function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), CLI_REFRESH_DIRECTORY, 'responses', `${id}.json`); }
 function desktopLayoutPath() { return path.join(app.getPath('userData'), DESKTOP_LAYOUT_FILE); }
 function alertsPath() { return path.join(app.getPath('userData'), ALERTS_FILE); }
+function historyPath() { return path.join(app.getPath('userData'), HISTORY_FILE); }
 
 function enabledProviderIds(data) {
   const configured = data?.settings?.enabledProviders;
@@ -286,7 +289,12 @@ async function desktopWidgetState() {
 }
 
 async function readUiState() {
-  return { ...(await readData()), collector: await readCollector(), alertState: await readAlertState() };
+  // An unreadable history.json must not take the rest of the control panel
+  // down with it — usage, alerts, and connections are all independent of it.
+  let history;
+  try { history = await readHistory(); }
+  catch (error) { history = { ...normaliseHistory({}), error: error.message }; }
+  return { ...(await readData()), collector: await readCollector(), alertState: await readAlertState(), history };
 }
 
 async function refreshNativeWidgets() {
@@ -619,6 +627,79 @@ async function evaluateAlerts() {
   });
 }
 
+let historyWork = Promise.resolve();
+
+async function readHistory() {
+  try { return normaliseHistory(JSON.parse(await readFile(historyPath(), 'utf8'))); }
+  catch (error) {
+    // A missing file is a normal first run: start empty. Anything else — a
+    // truncated or mid-write file, a permission error, a file momentarily
+    // locked by an external sync tool — must not be treated the same way.
+    // recordHistory writes unconditionally every refresh cycle; silently
+    // returning an empty history here would have the very next cycle
+    // overwrite and permanently destroy whatever was actually on disk.
+    if (error.code === 'ENOENT') return normaliseHistory({});
+    throw new Error(`Could not read history.json: ${error.message}`);
+  }
+}
+
+async function writeHistory(history) {
+  await writeJson(historyPath(), history);
+  return history;
+}
+
+// Its own queue, like alerts.json: a read-modify-write file with more than
+// one caller (the refresh cycle, the retention setting, a privacy operation)
+// must not race itself, or a change can be silently dropped.
+function queueHistoryWork(operation) {
+  const task = historyWork.catch(() => {}).then(operation);
+  historyWork = task.catch(() => {});
+  return task;
+}
+
+async function recordHistory() {
+  return queueHistoryWork(async () => {
+    const { history, changed } = recordHistorySamples({ data: await readData(), history: await readHistory(), now: Date.now() });
+    // Nothing changed (every quota's reading matched its last recorded
+    // point, and retention had nothing to prune): skip the write entirely,
+    // rather than rewriting an identical file every refresh cycle forever.
+    return changed ? writeHistory(history) : history;
+  });
+}
+
+async function saveHistoryRetention(retentionDays) {
+  await queueHistoryWork(async () => writeHistory(setRetentionDays(await readHistory(), retentionDays)));
+  notifyUsageChanged();
+  return readUiState();
+}
+
+async function clearHistory() {
+  await queueHistoryWork(async () => writeHistory({ ...(await readHistory()), samples: {} }));
+  notifyUsageChanged();
+  return readUiState();
+}
+
+// Mirrors settleAlertsAfterPrivacyChange's reasoning, but history has no
+// "settle to the frozen value" case to worry about: a chart is only ever
+// read, never re-announced, so a provider whose usage survives a disconnect
+// can safely keep its trend exactly as it already stands.
+async function forgetHistoryAfterPrivacyChange(providerIds) {
+  await queueHistoryWork(async () => writeHistory(forgetProviderHistory(await readHistory(), providerIds)));
+}
+
+async function exportHistory() {
+  const history = await readHistory();
+  const target = windowRef ?? undefined;
+  const { canceled, filePath } = await dialog.showSaveDialog(target, {
+    title: 'Export usage history',
+    defaultPath: `aiwidgets-history-${new Date().toISOString().slice(0, 10)}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (canceled || !filePath) return { exported: false };
+  await writeFile(filePath, `${JSON.stringify(history, null, 2)}\n`, 'utf8');
+  return { exported: true, filePath };
+}
+
 async function silenceProviderAlerts(providerId) {
   if (!PAGE_PROVIDER_IDS.includes(providerId)) throw new Error('Invalid page provider.');
   // Silencing must take effect immediately even if evaluateAlerts has not yet
@@ -652,6 +733,9 @@ async function disconnectProvider(providerId, clearUsage = false) {
     await writeCollector(collector);
     const { data } = await withUsageData((current) => disconnectUsageData(current, providerId, clearUsage));
     await settleAlertsAfterPrivacyChange([providerId], data);
+    // The trend chart follows the same choice as the metrics it is drawn
+    // from: preserving usage preserves its history too, deleting it deletes both.
+    if (clearUsage) await forgetHistoryAfterPrivacyChange([providerId]);
     notifyCollectorChanged();
     notifyUsageChanged();
     return readUiState();
@@ -664,6 +748,7 @@ async function resetFirstTimeSetup(clearUsage = false) {
     await writeCollector(defaultCollector());
     const { data } = await withUsageData((current) => resetFirstRunData(current, clearUsage));
     await settleAlertsAfterPrivacyChange(PAGE_PROVIDER_IDS, data);
+    if (clearUsage) await forgetHistoryAfterPrivacyChange(PAGE_PROVIDER_IDS);
     notifyCollectorChanged();
     notifyUsageChanged();
     return readUiState();
@@ -1001,9 +1086,10 @@ function refreshAllProviders() {
     await Promise.all(data.settings.enabledProviders.flatMap((providerId) => providerId === 'copilot'
       ? [refreshProvider('copilot')]
       : [refreshProvider(providerId)]));
-    // Alerts are decided once the cycle has written every provider, so a
-    // threshold and its failure state are judged against the same snapshot.
+    // Alerts and history are both decided once the cycle has written every
+    // provider, so they judge the same snapshot instead of a partial refresh.
     await evaluateAlerts().catch(() => {});
+    await recordHistory().catch(() => {});
     return readCollector();
   })();
   refreshInFlight = task;
@@ -1186,6 +1272,9 @@ ipcMain.handle('onboarding:reset', (_event, clearUsage) => resetFirstTimeSetup(c
 ipcMain.handle('alerts:save', (_event, alerts) => saveAlertSettings(alerts));
 ipcMain.handle('alerts:silence', (_event, providerId) => silenceProviderAlerts(providerId));
 ipcMain.handle('alerts:supported', () => Notification.isSupported());
+ipcMain.handle('history:save-retention', (_event, retentionDays) => saveHistoryRetention(retentionDays));
+ipcMain.handle('history:clear', clearHistory);
+ipcMain.handle('history:export', exportHistory);
 ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(height));
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());

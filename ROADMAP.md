@@ -119,10 +119,16 @@ actualizarse o el usuario silencia ese episodio.
 
 Objetivo: hacer visibles tendencias sin enviar telemetría.
 
-- [ ] Guardar muestras compactas de uso por proveedor.
-- [ ] Retención configurable: 7, 30 o 90 días.
-- [ ] Vista simple de tendencia por cuota.
-- [ ] Exportar y borrar historial local.
+- [x] Guardar muestras compactas de uso por proveedor. Un punto por cuota,
+  sólo cuando el valor cambia respecto del último guardado — el archivo
+  crece con el uso real, no con el tiempo.
+- [x] Retención configurable: 7, 30 o 90 días. Al cambiarla se poda de
+  inmediato, no en la siguiente escritura.
+- [x] Vista simple de tendencia por cuota: un sparkline compacto (línea +
+  área, eje temporal real, sin ejes visibles) por cuota, en un panel propio.
+- [x] Exportar (JSON, vía diálogo nativo) y borrar historial local (global,
+  con confirmación; y por proveedor, siguiendo la misma elección de
+  preservar/borrar de "Disconnect" en la Fase 4).
 
 Criterio de aceptación: el historial funciona sin red adicional y su tamaño y
 retención son transparentes.
@@ -146,10 +152,43 @@ Criterio de aceptación: macOS instala sin advertencias de Gatekeeper y Ubuntu
 recibe actualizaciones por su gestor de paquetes, sin requerir Node.js ni GitHub
 CLI del usuario.
 
+## Fase 8 — proveedor DeepSeek por API
+
+Objetivo: sumar un proveedor que no se conecta por página web sino por API key,
+y que expone saldo en lugar de cuota de porcentaje. Es el primer proveedor de
+este tipo y sienta el patrón para futuros proveedores por API.
+
+- [ ] Guardar la API key cifrada con `safeStorage` en un archivo propio
+  (`deepseek-credentials.json`), nunca en `usage.json`.
+- [ ] Leer el balance desde `GET https://api.deepseek.com/user/balance` con un
+  colector por `fetch` (nuevo tipo `api` junto al de páginas en `main.js`).
+- [ ] Barra única de disponibilidad: denominador = `granted_balance +
+  topped_up_balance`, disponible = `total_balance`, y usado derivado por resta
+  (`used = granted + topped_up − total_balance`), que es el "Total cost" de la
+  web. No hace falta historial local ni un denominador inventado.
+- [ ] Las recargas no requieren lógica especial: `topped_up_balance` y
+  `total_balance` suben juntos, así que `used` no cambia y la barra se rellena
+  sola. Mostrar un umbral configurable de "saldo bajo".
+- [ ] Onboarding y tarjeta DeepSeek con una acción "Conectar" que pide la API
+  key (no una ventana de login).
+- [ ] Alerta opcional de saldo bajo, respetando el modelo de opt-in de la
+  Fase 5.
+- [ ] "Disconnect" borra la key cifrada; reutilizar el flujo de privacidad de
+  la Fase 4.
+- [ ] Fixtures y pruebas de parseo del balance (`total_balance`,
+  `granted_balance`, `topped_up_balance`, moneda), recarga y errores (401 =
+  key inválida).
+
+Criterio de aceptación: la key nunca queda en texto plano en disco, la barra de
+disponibilidad refleja el saldo real (`available / total` y usado derivado) y
+una recarga rellena la barra sin reinterpretar el aumento como consumo. El dato
+queda local e igual en macOS y Ubuntu.
+
 ## Backlog posterior
 
 - [ ] Internacionalización de interfaz y formatos de fecha.
 - [ ] Accesibilidad: foco de teclado, etiquetas y contraste.
 - [ ] Más proveedores, solo tras definir una fuente estable y el mismo modelo
-  de privacidad local.
+  de privacidad local; reutilizar el patrón de API key de la Fase 8 cuando
+  corresponda.
 - [ ] Diagnóstico exportable y anonimizado para soporte, con consentimiento.

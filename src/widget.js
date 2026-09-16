@@ -7,8 +7,8 @@ let panelFitFrame = 0;
 let panelFitRevision = 0;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
-const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id === 'copilot' ? '../imgs/logo_copilot.png' : '../imgs/logo_chatgpt.svg';
-const providerName = (id) => id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : 'Codex';
+const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id === 'copilot' ? '../imgs/logo_copilot.png' : id === 'deepseek' ? '../imgs/logo_deepseek.svg' : '../imgs/logo_chatgpt.svg';
+const providerName = (id) => id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : id === 'deepseek' ? 'DeepSeek API' : 'Codex';
 const formatNumber = (value) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 const resetTimestamp = (label) => Date.parse(String(label)
   .replace(/^\s*(?:resets?|renews?)\s*(?:on|at)?\s*/i, '')
@@ -37,14 +37,26 @@ function quota(usage, label, unit = '') {
   return `<section class="quota"><div class="quota-label">${escapeHtml(label)}</div><div class="quota-summary"><strong class="quota-value">${consumed}%</strong><span class="quota-consumed">${escapeHtml(quantity)}</span></div><div class="quota-bar"><i class="quota-fill" style="width:${consumed}%"></i></div><div class="quota-meta">${available}% available</div><div class="quota-meta quota-reset">${escapeHtml(reset)}</div>${billed}</section>`;
 }
 
+function balance(balance) {
+  if (!balance || !Number.isFinite(balance.totalBalance)) return `<section class="quota"><div class="quota-label">API balance</div><div class="quota-summary"><strong class="quota-value">—</strong><span class="quota-consumed">no data</span></div></section>`;
+  const currency = balance.currency || 'USD';
+  const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 });
+  const total = Number(balance.included);
+  const available = Number(balance.totalBalance);
+  const used = Number(balance.used);
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(used)) return `<section class="quota"><div class="quota-label">API balance</div><div class="quota-summary"><strong class="quota-value">${escapeHtml(amount.format(available))}</strong><span class="quota-consumed">no funded balance yet</span></div></section>`;
+  const consumed = Math.max(0, Math.min(100, used / total * 100));
+  return `<section class="quota"><div class="quota-label">API balance</div><div class="quota-summary balance-summary"><div><strong class="quota-value">${Math.round(consumed)}%</strong><span class="quota-consumed">used</span></div><div class="balance-available"><strong>${escapeHtml(amount.format(available))}</strong><span class="quota-consumed">available</span></div></div><div class="quota-bar"><i class="quota-fill" style="width:${consumed}%"></i></div><div class="quota-meta">${escapeHtml(amount.format(used))} used of ${escapeHtml(amount.format(total))}</div></section>`;
+}
+
 function card(provider, id, panel) {
   const name = provider?.name || providerName(id);
   const health = providerConnectionHealth(state.collector, id);
   const blocks = id === 'copilot'
     ? `${quota(provider?.monthly, provider?.monthly?.label || 'Premium requests', 'requests')}${quota(provider?.actionsMinutes, 'Actions minutes', 'min')}`
-    : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
+    : id === 'deepseek' ? balance(provider?.balance) : `${quota(provider?.session, 'Session')}${quota(provider?.weekly, 'Weekly')}`;
   const note = `<div class="widget-note health-${health.state}" title="${escapeHtml(health.message)}">${escapeHtml(health.message)}</div>`;
-  return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
+  return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo ${id}" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
 }
 
 function fitPanelToDisplay() {
@@ -61,7 +73,7 @@ function fitPanelToDisplay() {
     const contentHeight = root.scrollHeight;
     const availableHeight = window.innerHeight;
     if (contentHeight <= availableHeight) {
-      window.desktopWidgets.resizePanel(Math.ceil(contentHeight));
+      window.desktopWidgets.resizePanel({ height: Math.ceil(contentHeight), width: panelWidth() });
       return;
     }
 
@@ -70,7 +82,7 @@ function fitPanelToDisplay() {
     root.style.setProperty('--panel-unscaled-width', `${100 / scale}%`);
     panelFitFrame = requestAnimationFrame(() => {
       if (!isCurrent()) return;
-      window.desktopWidgets.resizePanel(Math.min(availableHeight, Math.ceil(root.scrollHeight * scale)));
+      window.desktopWidgets.resizePanel({ height: Math.min(availableHeight, Math.ceil(root.scrollHeight * scale)), width: panelWidth() });
     });
   };
 
@@ -89,11 +101,21 @@ function fitPanelToDisplay() {
   });
 }
 
+function panelLayout() {
+  return ['one-column', 'two-columns', 'row'].includes(state?.layout?.panelLayout) ? state.layout.panelLayout : 'one-column';
+}
+
+function panelWidth() {
+  const count = Math.max(1, (state?.data?.settings?.enabledProviders || []).filter((id) => ['claude', 'codex', 'copilot', 'deepseek'].includes(id)).length);
+  if (panelLayout() === 'row') return Math.min(1200, count * 300 + 16);
+  return panelLayout() === 'two-columns' ? 632 : 318;
+}
+
 function render() {
   if (!state) return;
   const providers = new Map((state.data?.providers || []).map((provider) => [provider.id, provider]));
   const ids = Array.isArray(state.data?.settings?.enabledProviders) ? state.data.settings.enabledProviders : ['claude', 'codex'];
-  const cards = ids.filter((id) => ['claude', 'codex', 'copilot'].includes(id)).map((id) => card(providers.get(id), id, surface === 'panel')).join('');
+  const cards = ids.filter((id) => ['claude', 'codex', 'copilot', 'deepseek'].includes(id)).map((id) => card(providers.get(id), id, surface === 'panel')).join('');
   const content = cards || '<section class="widget-empty">No providers selected. Open settings to choose one.</section>';
   document.body.classList.toggle('editing', surface === 'desktop' && state.layout?.editing === true);
   if (surface === 'desktop') {
@@ -102,7 +124,9 @@ function render() {
   }
   const editLabel = state.layout?.editing ? 'Pin cards to desktop' : 'Edit position and size';
   const visibilityLabel = state.layout?.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards';
-  root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage</div>${content}<div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button><button data-action="settings">Open settings</button><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
+  const layout = panelLayout();
+  const providerCount = Math.max(1, ids.filter((id) => ['claude', 'codex', 'copilot', 'deepseek'].includes(id)).length);
+  root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage <label class="panel-layout">Layout <select data-action="panel-layout"><option value="one-column"${layout === 'one-column' ? ' selected' : ''}>1 column</option><option value="two-columns"${layout === 'two-columns' ? ' selected' : ''}>2 columns</option><option value="row"${layout === 'row' ? ' selected' : ''}>1 row</option></select></label></div><div class="panel-cards ${layout}" style="--provider-count:${providerCount}">${content}</div><div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="settings">Open settings</button><details><summary>Desktop cards</summary><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button></details><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
   fitPanelToDisplay();
 }
 
@@ -137,6 +161,16 @@ root.addEventListener('click', async (event) => {
     render();
   } catch (error) {
     renderError(error);
+  }
+});
+
+root.addEventListener('change', async (event) => {
+  if (event.target.closest('[data-action="panel-layout"]')) {
+    try {
+      await window.desktopWidgets.setPanelLayout(event.target.value);
+      state = await window.desktopWidgets.state();
+      render();
+    } catch (error) { renderError(error); }
   }
 });
 

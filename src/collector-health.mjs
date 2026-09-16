@@ -47,6 +47,7 @@ export function defaultCollector() {
       claude: disconnected(),
       codex: disconnected(),
       copilot: { premium: disconnected(), actions: disconnected() },
+      deepseek: disconnected(),
     },
   };
 }
@@ -65,6 +66,7 @@ export function normaliseCollector(raw) {
         premium: normaliseCollectorEntry(premium),
         actions: normaliseCollectorEntry(copilot.actions),
       },
+      deepseek: normaliseCollectorEntry(providers.deepseek),
     },
   };
 }

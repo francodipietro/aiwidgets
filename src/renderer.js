@@ -5,6 +5,8 @@ import { RETENTION_DAYS_CHOICES, minMax, sparklineGeometry } from './history.mjs
 const app = document.querySelector('#app');
 let state;
 let integrating = false;
+let connectingDeepSeek = false;
+let editingDeepSeekFunding = false;
 let managingProviders = false;
 let setupProviderIds = null;
 let onboardingError = '';
@@ -41,6 +43,17 @@ const meter = (usage, label) => {
   return `<section class="usage"><span>${label}</span><div class="figure"><strong>${consumed}%</strong><div><b>consumed</b><small>${available}% available</small></div></div><div class="bar"><i style="width:${consumed}%"></i></div><small>${resetText(usage)}</small></section>`;
 };
 
+const money = (value, currency) => new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value);
+const balanceMeter = (balance) => {
+  if (!balance) return `<section class="usage unavailable"><span>API balance</span><strong>—</strong><small>no data</small></section>`;
+  const total = Number(balance.included);
+  const available = Number(balance.totalBalance);
+  const used = Number(balance.used);
+  if (![total, available, used].every(Number.isFinite) || total <= 0) return `<section class="usage unavailable"><span>API balance</span><strong>${escapeHtml(money(available || 0, balance.currency || 'USD'))}</strong><small>No funded balance yet</small></section>`;
+  const consumed = Math.max(0, Math.min(100, used / total * 100));
+  return `<section class="usage deepseek-balance"><span>API balance</span><div class="balance-figure"><div><strong>${Math.round(consumed)}%</strong><b>used</b></div><div class="balance-available"><strong>${escapeHtml(money(available, balance.currency))}</strong><b>available</b></div></div><div class="bar"><i style="width:${consumed}%"></i></div><small>${escapeHtml(money(used, balance.currency))} used of ${escapeHtml(money(total, balance.currency))}</small></section>`;
+};
+
 const formatNumber = (value) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(value);
 const actionsMeter = (usage) => {
   const available = percentage(usage);
@@ -54,6 +67,7 @@ const actionsMeter = (usage) => {
 };
 
 const providerLogo = (id) => {
+  if (id === 'deepseek') return '<img class="provider-logo deepseek" src="../imgs/logo_deepseek.svg" alt="DeepSeek" />';
   const logo = id === 'codex' ? 'chatgpt.svg' : id === 'copilot' ? 'copilot.png' : 'claude.svg';
   return `<img class="provider-logo ${id}" src="../imgs/logo_${logo}" alt="" />`;
 };
@@ -67,6 +81,7 @@ function alertsEnabledFor(providerId) {
 
 function card(provider) {
   const health = providerConnectionHealth(state.collector, provider.id);
+  const apiConnect = provider.id === 'deepseek' ? `<button class="connect-api" data-action="set-deepseek-funding">Funding</button><button class="connect-api" data-action="connect-deepseek">${state.collector?.providers?.deepseek?.configured ? 'API key' : 'Connect'}</button>` : '';
   const reconnect = health.state === 'expired' ? ' <button class="health-action" data-action="integrate">Reconnect</button>' : '';
   // Offer to stop the repeating failure alert only while one can actually be
   // firing: alerts on for this provider, a failing state, and not yet silenced.
@@ -75,18 +90,22 @@ function card(provider) {
     && state.alertState?.failures?.[provider.id]?.silenced !== true;
   const silence = silenceable ? ` <button class="health-action" data-action="silence-alerts" data-provider="${provider.id}" title="Stop repeating this alert until ${escapeHtml(provider.name)} updates again">Silence</button>` : '';
   return `<article class="card ${provider.id}" style="--accent:${escapeHtml(provider.accent)}">
-    <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1><button class="refresh" data-action="refresh-provider" data-provider="${provider.id}" title="Refresh ${escapeHtml(provider.name)}">↻</button></div>
-    <div class="usage-row">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
+    <div class="card-heading">${providerLogo(provider.id)}<h1>${escapeHtml(provider.name)}</h1>${apiConnect}<button class="refresh" data-action="refresh-provider" data-provider="${provider.id}" title="Refresh ${escapeHtml(provider.name)}">↻</button></div>
+    <div class="usage-row ${provider.id === 'deepseek' ? 'single-usage' : ''}">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : provider.id === 'deepseek' ? balanceMeter(provider.balance) : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
     <p class="note health ${health.state}">${escapeHtml(health.message)}${reconnect}${silence}</p>
   </article>`;
 }
 
-function integrationPanel(providerIds = ['claude', 'codex', 'copilot']) {
+function integrationPanel(providerIds = ['claude', 'codex', 'copilot', 'deepseek']) {
   const info = state.collector;
   if (!info) return '<section id="integration"><p>Loading account connection…</p></section>';
   const row = (id) => {
     const provider = info.providers[id];
     const health = providerConnectionHealth(info, id);
+    if (id === 'deepseek') {
+      const lastSync = provider.lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(provider.lastSync)) : 'not updated yet';
+      return `<article class="account-row"><div><h3>DeepSeek API</h3><p>${escapeHtml(health.message)}</p><small>${provider.configured ? `API key stored securely · ${lastSync}` : 'Not connected yet.'}</small></div><div class="account-actions"><button data-action="connect-deepseek">${provider.configured ? 'Replace API key' : 'Connect DeepSeek'}</button>${provider.configured ? '<button class="danger" data-action="disconnect-provider" data-provider="deepseek">Disconnect</button>' : ''}</div><small class="account-destination">API balance · key encrypted locally</small></article>`;
+    }
     if (id === 'copilot') {
       const lastSync = [provider.premium, provider.actions].map((source) => source.lastSync).filter(Boolean).sort().at(-1);
       const updated = lastSync ? new Intl.DateTimeFormat('en-US', { timeStyle: 'short', dateStyle: 'short' }).format(new Date(lastSync)) : 'not updated yet';
@@ -100,17 +119,27 @@ function integrationPanel(providerIds = ['claude', 'codex', 'copilot']) {
   };
   const selectedSetup = setupProviderIds !== null;
   return `<section id="integration"><h2>${selectedSetup ? 'Connect selected accounts' : 'Connect subscriptions'}</h2>
-    <p>Sign in once to each account. AI Widgets opens each provider's usage view, detects it automatically, and keeps its browser session private—Chrome and GitHub CLI are not required.</p>
+    <p>Sign in once to each account, or connect DeepSeek with an API key. Browser sessions and API keys stay local to AI Widgets.</p>
     ${providerIds.map(row).join('')}
     <footer><button data-action="refresh-providers">Update now</button></footer>
     <p class="bridge-status">Sessions stay local to AI Widgets. Configured sources are refreshed every minute; conversations and page text are not retained.</p>
   </section>`;
 }
 
+function deepSeekConnectPanel() {
+  return `<form id="deepseek-connect" class="setup-panel"><h2>Connect DeepSeek API</h2><p>Paste an API key with permission to read your balance. It is encrypted with your operating system's secure storage and saved separately from usage data.</p><label class="api-key-field"><span>DeepSeek API key</span><input name="api-key" type="password" autocomplete="off" required /></label>${onboardingError ? `<p class="form-error">${escapeHtml(onboardingError)}</p>` : ''}<footer><button type="button" data-action="cancel-deepseek">Cancel</button><button class="primary" type="submit">Connect</button></footer></form>`;
+}
+
+function deepSeekFundingPanel() {
+  const balance = state.providers.find((provider) => provider.id === 'deepseek')?.balance;
+  const current = Number.isFinite(balance?.fundedBalance) ? balance.fundedBalance : balance?.totalBalance;
+  return `<form id="deepseek-funding" class="setup-panel"><h2>DeepSeek funded balance</h2><p>Set the total amount funded so far in ${escapeHtml(balance?.currency || 'USD')}. AI Widgets derives usage from this total and automatically adds future balance increases as top-ups.</p><label class="api-key-field"><span>Total funded (${escapeHtml(balance?.currency || 'USD')})</span><input name="funded-balance" type="number" min="0" step="0.01" value="${Number.isFinite(current) ? current : ''}" required /></label>${onboardingError ? `<p class="form-error">${escapeHtml(onboardingError)}</p>` : ''}<footer><button type="button" data-action="cancel-deepseek-funding">Cancel</button><button class="primary" type="submit">Save funded balance</button></footer></form>`;
+}
+
 function onboardingPanel() {
   return `<form id="onboarding" class="setup-panel"><h2>Choose providers</h2>
     <p>Select the AI services whose usage you want to see. Nothing is enabled until you choose it; the next step lets you sign in to each selected account.</p>
-    ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="provider" value="${provider.id}" /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${provider.id === 'copilot' ? 'Premium requests and Actions minutes' : 'Session and weekly usage'}</small></span></label>`).join('')}
+    ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="provider" value="${provider.id}" /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${provider.id === 'copilot' ? 'Premium requests and Actions minutes' : provider.id === 'deepseek' ? 'API balance via encrypted API key' : 'Session and weekly usage'}</small></span></label>`).join('')}
     ${onboardingError ? `<p class="form-error">${escapeHtml(onboardingError)}</p>` : ''}
     <footer><button class="primary" type="submit">Continue to sign in</button></footer>
   </form>`;
@@ -119,20 +148,23 @@ function onboardingPanel() {
 function providerPanel() {
   const selected = activeProviderIds();
   return `<form id="provider-settings"><h2>Visible providers</h2><p>Only selected providers are shown in the app, desktop widget, and panel menu. Selected providers are also the only ones refreshed automatically.</p>
-    ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="provider" value="${provider.id}" ${selected.has(provider.id) ? 'checked' : ''} /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${provider.id === 'copilot' ? 'Premium requests and Actions minutes' : 'Session and weekly usage'}</small></span></label>`).join('')}
+    ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="provider" value="${provider.id}" ${selected.has(provider.id) ? 'checked' : ''} /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${provider.id === 'copilot' ? 'Premium requests and Actions minutes' : provider.id === 'deepseek' ? 'API balance via encrypted API key' : 'Session and weekly usage'}</small></span></label>`).join('')}
     <footer><button type="button" data-action="cancel-providers">Cancel</button><button type="button" class="danger" data-action="reset-onboarding">Reset first-time setup</button><button class="primary" type="submit">Save providers</button></footer>
   </form>`;
 }
 
 function alertPanel() {
   const alerts = alertDraft ?? state.settings.alerts;
-  const quotaSummary = (providerId) => PROVIDER_QUOTAS[providerId]
+  const quotaSummary = (providerId) => providerId === 'deepseek'
+    ? `when available balance is at or below ${alerts.deepseekLowBalance}`
+    : PROVIDER_QUOTAS[providerId]
     .map((quota) => `${quota.label} at ${quota.steps.join('%, ')}%`)
     .join(' · ');
   const failureChoice = (minutes, label) => `<option value="${minutes ?? ''}" ${alerts.failureMinutes === minutes ? 'selected' : ''}>${label}</option>`;
   return `<form id="alert-settings"><h2>Usage alerts</h2>
     <p>A local notification when a quota crosses a threshold, once per quota and reset period. Nothing is sent anywhere; alerts are off until you turn them on.</p>
     ${state.providers.map((provider) => `<label class="provider-choice"><input type="checkbox" name="alert-provider" value="${provider.id}" ${alerts.providers[provider.id]?.enabled ? 'checked' : ''} /><span>${providerLogo(provider.id)}</span><span><b>${escapeHtml(provider.name)}</b><small>${escapeHtml(quotaSummary(provider.id))}</small></span></label>`).join('')}
+    <label class="alert-cadence"><span>DeepSeek low-balance threshold</span><input name="deepseek-low-balance" type="number" min="0" step="0.01" value="${escapeHtml(alerts.deepseekLowBalance)}" /></label>
     <label class="alert-cadence"><span>Tell me when a provider stops updating</span><select name="failure-minutes">
       ${failureChoice(null, 'Never')}
       ${FAILURE_MINUTES_CHOICES.map((minutes) => failureChoice(minutes, `After ${minutes} min, repeating`)).join('')}
@@ -232,7 +264,7 @@ function render() {
     ? '<button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>'
     : `<button data-action="providers">Providers</button><button data-action="alerts">Alerts</button><button data-action="history">History</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
   app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">${onboarding ? 'First-time setup' : `Settings and connection · ${updated}`}</span><nav class="no-drag">${navigation}</nav></header>
-    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : managingAlerts ? alertPanel() : managingHistory ? historyPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : connectingDeepSeek ? deepSeekConnectPanel() : editingDeepSeekFunding ? deepSeekFundingPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : managingAlerts ? alertPanel() : managingHistory ? historyPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
   requestAnimationFrame(() => {
     const height = Math.ceil(app.scrollHeight);
     if (height === lastRequestedHeight) return;
@@ -260,6 +292,10 @@ app.addEventListener('click', async (event) => {
     if (providerId) await window.aiwidgets.refreshProvider(providerId);
     return load();
   }
+  if (action === 'connect-deepseek') { connectingDeepSeek = true; integrating = false; onboardingError = ''; return render(); }
+  if (action === 'cancel-deepseek') { connectingDeepSeek = false; integrating = true; onboardingError = ''; return render(); }
+  if (action === 'set-deepseek-funding') { editingDeepSeekFunding = true; onboardingError = ''; return render(); }
+  if (action === 'cancel-deepseek-funding') { editingDeepSeekFunding = false; onboardingError = ''; return render(); }
   if (action === 'minimize') return window.aiwidgets.minimize();
   if (action === 'close') return window.aiwidgets.close();
   if (action === 'providers') { managingProviders = !managingProviders; integrating = false; managingAlerts = false; managingHistory = false; setupProviderIds = null; privacyConfirmation = null; return render(); }
@@ -313,11 +349,36 @@ app.addEventListener('change', async (event) => {
   if (!alertDraft) return;
   if (event.target.name === 'alert-provider') alertDraft.providers[event.target.value] = { enabled: event.target.checked };
   if (event.target.name === 'failure-minutes') alertDraft.failureMinutes = event.target.value ? Number(event.target.value) : null;
+  if (event.target.name === 'deepseek-low-balance') alertDraft.deepseekLowBalance = Number(event.target.value);
 });
 
 app.addEventListener('submit', async (event) => {
-  if (!['provider-settings', 'onboarding', 'privacy-confirmation', 'alert-settings'].includes(event.target.id)) return;
+  if (!['provider-settings', 'onboarding', 'privacy-confirmation', 'alert-settings', 'deepseek-connect', 'deepseek-funding'].includes(event.target.id)) return;
   event.preventDefault();
+  if (event.target.id === 'deepseek-connect') {
+    try {
+      state = await window.aiwidgets.connectDeepSeek(event.target.elements['api-key'].value);
+      connectingDeepSeek = false;
+      integrating = true;
+      onboardingError = '';
+      state.collector = await window.aiwidgets.collectorInfo();
+      return render();
+    } catch (error) {
+      onboardingError = `Could not connect DeepSeek: ${error.message || String(error)}`;
+      return render();
+    }
+  }
+  if (event.target.id === 'deepseek-funding') {
+    try {
+      state = await window.aiwidgets.saveDeepSeekFundedBalance(event.target.elements['funded-balance'].value);
+      editingDeepSeekFunding = false;
+      onboardingError = '';
+      return render();
+    } catch (error) {
+      onboardingError = `Could not save funded balance: ${error.message || String(error)}`;
+      return render();
+    }
+  }
   if (event.target.id === 'alert-settings') {
     state = await window.aiwidgets.saveAlerts(alertDraft ?? state.settings.alerts);
     managingAlerts = false;

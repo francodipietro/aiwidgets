@@ -11,8 +11,10 @@ import { alertNotification, normaliseAlertState, pendingFailureAlerts, pendingUs
 import { forgetProviderHistory, normaliseHistory, recordHistorySamples, setRetentionDays } from './history.mjs';
 import { DEFAULT_DATA, createFirstRunData, disconnectUsageData, normaliseUsageData, resetFirstRunData } from './usage-data.mjs';
 import { parseVisibleUsage } from './usage-parser.mjs';
+import { mergeDeepSeekBalance } from './deepseek-balance.mjs';
+import { fetchDeepSeekBalance } from './deepseek-client.mjs';
 
-const { app, BrowserWindow, Notification, dialog, ipcMain, nativeImage, screen, session, Tray } = electron;
+const { app, BrowserWindow, Notification, dialog, ipcMain, nativeImage, safeStorage, screen, session, Tray } = electron;
 const APP_NAME = 'AI Widgets';
 const DATA_FILE = 'usage.json';
 const COLLECTOR_FILE = 'subscription-collector.json';
@@ -21,6 +23,7 @@ const DESKTOP_LAYOUT_FILE = 'desktop-widget.json';
 const HEARTBEAT_FILE = 'collector-heartbeat.json';
 const ALERTS_FILE = 'alerts.json';
 const HISTORY_FILE = 'history.json';
+const DEEPSEEK_CREDENTIALS_FILE = 'deepseek-credentials.json';
 const CLI_REFRESH_DIRECTORY = 'usage-refresh';
 const CLI_REFRESH_RESPONSE_TTL_MS = 60_000;
 const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,22 +43,26 @@ const PROVIDERS = {
       actions: 'https://github.com/login?return_to=%2Fsettings%2Fbilling',
     },
   },
+  deepseek: { name: 'DeepSeek API' },
 };
 const DEFAULT_DESKTOP_LAYOUT = {
-  version: 1,
+  version: 3,
   x: null,
   y: null,
   cardWidth: 170,
   desktopVisible: true,
   editing: false,
   autoPosition: true,
+  panelLayout: 'one-column',
 };
-const PROVIDER_IDS = ['claude', 'codex', 'copilot'];
+const PROVIDER_IDS = ['claude', 'codex', 'copilot', 'deepseek'];
 const PAGE_PROVIDER_IDS = ['claude', 'codex', 'copilot'];
+const API_PROVIDER_IDS = ['deepseek'];
 const MAC_WIDGET_SPACING = 20;
 const MAC_WIDGET_MARGIN = 28;
 const MAC_WIDGET_HEIGHT = 286;
 const MAC_PANEL_WIDTH = 318;
+const MAC_PANEL_MAX_WIDTH = 1200;
 
 let windowRef;
 let desktopWidgetRef;
@@ -135,6 +142,7 @@ function cliRefreshResponsePath(id) { return path.join(app.getPath('userData'), 
 function desktopLayoutPath() { return path.join(app.getPath('userData'), DESKTOP_LAYOUT_FILE); }
 function alertsPath() { return path.join(app.getPath('userData'), ALERTS_FILE); }
 function historyPath() { return path.join(app.getPath('userData'), HISTORY_FILE); }
+function deepSeekCredentialsPath() { return path.join(app.getPath('userData'), DEEPSEEK_CREDENTIALS_FILE); }
 
 function enabledProviderIds(data) {
   const configured = data?.settings?.enabledProviders;
@@ -143,10 +151,14 @@ function enabledProviderIds(data) {
 
 function normaliseDesktopLayout(input) {
   const layout = input && typeof input === 'object' ? input : {};
+  const { panelColumns, ...modernLayout } = layout;
   const coordinate = (value) => Number.isFinite(value) ? Math.round(value) : null;
+  const panelLayout = ['one-column', 'two-columns', 'row'].includes(modernLayout.panelLayout)
+    ? modernLayout.panelLayout
+    : Number(panelColumns) === 2 ? 'two-columns' : 'one-column';
   return {
     ...DEFAULT_DESKTOP_LAYOUT,
-    ...layout,
+    ...modernLayout,
     version: DEFAULT_DESKTOP_LAYOUT.version,
     x: coordinate(layout.x),
     y: coordinate(layout.y),
@@ -154,6 +166,7 @@ function normaliseDesktopLayout(input) {
     desktopVisible: layout.desktopVisible !== false,
     editing: layout.editing === true,
     autoPosition: layout.autoPosition !== false,
+    panelLayout,
   };
 }
 
@@ -368,27 +381,31 @@ function createDesktopWidget() {
   return desktopWidgetRef;
 }
 
-function trayPopoverBounds(preferredHeight) {
+function trayPopoverBounds(preferredHeight, preferredWidth) {
   const display = screen.getDisplayNearestPoint(trayRef?.getBounds() || screen.getCursorScreenPoint());
   const { workArea } = display;
   const maxHeight = Math.max(1, workArea.height - 24);
+  const maxWidth = Math.max(1, Math.min(MAC_PANEL_MAX_WIDTH, workArea.width - 16));
   const initialHeight = Math.min(720, maxHeight);
   const currentHeight = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().height : initialHeight;
+  const currentWidth = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().width : MAC_PANEL_WIDTH;
   const requestedHeight = Number.isFinite(preferredHeight) ? preferredHeight : currentHeight;
+  const requestedWidth = Number.isFinite(preferredWidth) ? preferredWidth : currentWidth;
   const height = Math.max(Math.min(280, maxHeight), Math.min(Math.ceil(requestedHeight), maxHeight));
+  const width = Math.max(Math.min(MAC_PANEL_WIDTH, maxWidth), Math.min(Math.ceil(requestedWidth), maxWidth));
   const trayBounds = trayRef?.getBounds();
-  const requestedX = trayBounds ? trayBounds.x + trayBounds.width - MAC_PANEL_WIDTH : workArea.x + workArea.width - MAC_PANEL_WIDTH - 8;
+  const requestedX = trayBounds ? trayBounds.x + trayBounds.width - width : workArea.x + workArea.width - width - 8;
   const requestedY = trayBounds ? trayBounds.y + trayBounds.height + 4 : workArea.y + 4;
   return {
-    x: Math.max(workArea.x + 8, Math.min(requestedX, workArea.x + workArea.width - MAC_PANEL_WIDTH - 8)),
+    x: Math.max(workArea.x + 8, Math.min(requestedX, workArea.x + workArea.width - width - 8)),
     y: Math.max(workArea.y + 4, Math.min(requestedY, workArea.y + workArea.height - height - 8)),
-    width: MAC_PANEL_WIDTH, height,
+    width, height,
   };
 }
 
-function resizeTrayPopover(contentHeight) {
+function resizeTrayPopover(contentHeight, contentWidth) {
   if (!trayPopoverRef || trayPopoverRef.isDestroyed() || !Number.isFinite(contentHeight)) return;
-  const bounds = trayPopoverBounds(contentHeight);
+  const bounds = trayPopoverBounds(contentHeight, contentWidth);
   const current = trayPopoverRef.getBounds();
   if (current.x === bounds.x && current.y === bounds.y && current.width === bounds.width && current.height === bounds.height) return;
   trayPopoverRef.setBounds(bounds);
@@ -486,6 +503,24 @@ function collectorEntry(config, providerId, source = 'default') {
   return providerId === 'copilot' ? config.providers.copilot[source] : config.providers[providerId];
 }
 
+async function readDeepSeekApiKey() {
+  let stored;
+  try { stored = JSON.parse(await readFile(deepSeekCredentialsPath(), 'utf8')); }
+  catch { return null; }
+  if (typeof stored?.encryptedApiKey !== 'string' || !safeStorage.isEncryptionAvailable()) return null;
+  try { return safeStorage.decryptString(Buffer.from(stored.encryptedApiKey, 'base64')); }
+  catch { return null; }
+}
+
+async function saveDeepSeekApiKey(apiKey) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure credential storage is unavailable on this system.');
+  await writeJson(deepSeekCredentialsPath(), { encryptedApiKey: safeStorage.encryptString(apiKey).toString('base64') });
+}
+
+async function deleteDeepSeekApiKey() {
+  await unlink(deepSeekCredentialsPath()).catch((error) => { if (error.code !== 'ENOENT') throw error; });
+}
+
 function sourceStartUrl(providerId, source = 'default') {
   return PROVIDERS[providerId].startUrls?.[source] || PROVIDERS[providerId].startUrl;
 }
@@ -496,6 +531,7 @@ function normaliseProviderSource(providerId, source) {
 }
 
 function providerSources(providerId) {
+  if (providerId === 'deepseek') return ['api'];
   return providerId === 'copilot' ? ['premium', 'actions'] : ['default'];
 }
 
@@ -701,7 +737,7 @@ async function exportHistory() {
 }
 
 async function silenceProviderAlerts(providerId) {
-  if (!PAGE_PROVIDER_IDS.includes(providerId)) throw new Error('Invalid page provider.');
+  if (!PROVIDER_IDS.includes(providerId)) throw new Error('Invalid provider.');
   // Silencing must take effect immediately even if evaluateAlerts has not yet
   // run a cycle to create the failing episode itself — otherwise the click
   // would be a silent no-op and the alert would still fire on the next cycle.
@@ -723,9 +759,10 @@ async function settleAlertsAfterPrivacyChange(providerIds, data) {
 }
 
 async function disconnectProvider(providerId, clearUsage = false) {
-  if (!PAGE_PROVIDER_IDS.includes(providerId)) throw new Error('Invalid page provider.');
+  if (!PROVIDER_IDS.includes(providerId)) throw new Error('Invalid provider.');
   return runPrivacyOperation([providerId], async () => {
-    await clearProviderSession(providerId);
+    if (PAGE_PROVIDER_IDS.includes(providerId)) await clearProviderSession(providerId);
+    if (providerId === 'deepseek') await deleteDeepSeekApiKey();
     const collector = await readCollector();
     const defaults = defaultCollector();
     if (providerId === 'copilot') collector.providers.copilot = defaults.providers.copilot;
@@ -743,12 +780,13 @@ async function disconnectProvider(providerId, clearUsage = false) {
 }
 
 async function resetFirstTimeSetup(clearUsage = false) {
-  return runPrivacyOperation(PAGE_PROVIDER_IDS, async () => {
+  return runPrivacyOperation(PROVIDER_IDS, async () => {
     await clearCollectorPartition();
+    await deleteDeepSeekApiKey();
     await writeCollector(defaultCollector());
     const { data } = await withUsageData((current) => resetFirstRunData(current, clearUsage));
-    await settleAlertsAfterPrivacyChange(PAGE_PROVIDER_IDS, data);
-    if (clearUsage) await forgetHistoryAfterPrivacyChange(PAGE_PROVIDER_IDS);
+    await settleAlertsAfterPrivacyChange(PROVIDER_IDS, data);
+    if (clearUsage) await forgetHistoryAfterPrivacyChange(PROVIDER_IDS);
     notifyCollectorChanged();
     notifyUsageChanged();
     return readUiState();
@@ -819,6 +857,30 @@ async function applyCollectedUsage(providerId, text, source = 'default') {
   });
   notifyUsageChanged();
   return { accepted: true, session: parsed.session?.available ?? null, weekly: parsed.weekly?.available ?? null, monthly: parsed.monthly?.available ?? null };
+}
+
+async function applyDeepSeekBalance(balance) {
+  await withUsageData((current) => {
+    const provider = current.providers.find((item) => item.id === 'deepseek');
+    provider.balance = mergeDeepSeekBalance(provider.balance, balance);
+    provider.note = 'Balance updated from DeepSeek API.';
+    return current;
+  });
+  notifyUsageChanged();
+}
+
+async function saveDeepSeekFundedBalance(value) {
+  const fundedBalance = Number(value);
+  if (!Number.isFinite(fundedBalance) || fundedBalance < 0) throw new Error('Enter a valid funded balance.');
+  await withUsageData((current) => {
+    const provider = current.providers.find((item) => item.id === 'deepseek');
+    if (!provider?.balance) throw new Error('Refresh the DeepSeek balance before setting its funded total.');
+    if (fundedBalance < provider.balance.totalBalance) throw new Error('Funded balance cannot be below the available balance.');
+    provider.balance = { ...provider.balance, fundedBalance, included: fundedBalance, used: fundedBalance - provider.balance.totalBalance };
+    return current;
+  });
+  notifyUsageChanged();
+  return readUiState();
 }
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -1074,7 +1136,50 @@ async function refreshCopilotProvider() {
   return readCollector();
 }
 
+async function refreshDeepSeekProviderNow() {
+  if (isPrivacyProtected('deepseek')) return readCollector();
+  const key = await readDeepSeekApiKey();
+  if (!key) return setCollectorFailure('deepseek', { code: 'api-key-missing', message: 'API key is unavailable; connect DeepSeek again.' }, 'API key unavailable; reconnect required.');
+  try {
+    await recordCollectorAttempt('deepseek', 'Refreshing balance…');
+    await applyDeepSeekBalance(await fetchDeepSeekBalance(key));
+    return setCollectorStatus('deepseek', 'Updated automatically.', new Date().toISOString());
+  } catch (error) {
+    return setCollectorFailure('deepseek', error, `Could not update balance: ${error.message}`);
+  }
+}
+
+function refreshDeepSeekProvider() {
+  if (isPrivacyProtected('deepseek')) return readCollector();
+  const active = providerRefreshInFlight.get('deepseek:api');
+  if (active) return active;
+  const task = refreshDeepSeekProviderNow();
+  providerRefreshInFlight.set('deepseek:api', task);
+  task.finally(() => { if (providerRefreshInFlight.get('deepseek:api') === task) providerRefreshInFlight.delete('deepseek:api'); }).catch(() => {});
+  return task;
+}
+
+async function connectDeepSeek(apiKey) {
+  const key = typeof apiKey === 'string' ? apiKey.trim() : '';
+  if (!key) throw new Error('Enter a DeepSeek API key.');
+  if (key.length > 1000) throw new Error('The API key is too long.');
+  // Connecting writes the same credential and collector state that a privacy
+  // action removes. One queue prevents an in-flight Connect from recreating
+  // the key just after Disconnect or Reset has removed it.
+  await runPrivacyOperation(['deepseek'], async () => {
+    await saveDeepSeekApiKey(key);
+    const config = await readCollector();
+    Object.assign(config.providers.deepseek, { configured: true, url: 'https://api.deepseek.com/user/balance', status: 'API key saved. Refreshing balance…', error: null });
+    await writeCollector(config);
+    await enableProvider('deepseek');
+    notifyCollectorChanged();
+  });
+  await refreshDeepSeekProvider();
+  return readUiState();
+}
+
 async function refreshProvider(providerId, source = 'default') {
+  if (providerId === 'deepseek') return refreshDeepSeekProvider();
   if (providerId === 'copilot') return refreshCopilotProvider();
   return refreshPageProvider(providerId, source);
 }
@@ -1266,8 +1371,10 @@ ipcMain.handle('collector:open', (_event, providerId, source) => PAGE_PROVIDER_I
 ipcMain.handle('collector:refresh', refreshAllProviders);
 ipcMain.handle('collector:refresh-provider', (_event, providerId) => PAGE_PROVIDER_IDS.includes(providerId)
   ? refreshProvider(providerId)
-  : Promise.reject(new Error('Invalid page provider.')));
+  : API_PROVIDER_IDS.includes(providerId) ? refreshProvider(providerId) : Promise.reject(new Error('Invalid provider.')));
 ipcMain.handle('collector:disconnect', (_event, providerId, clearUsage) => disconnectProvider(providerId, clearUsage === true));
+ipcMain.handle('deepseek:connect', (_event, apiKey) => connectDeepSeek(apiKey));
+ipcMain.handle('deepseek:save-funded', (_event, fundedBalance) => saveDeepSeekFundedBalance(fundedBalance));
 ipcMain.handle('onboarding:reset', (_event, clearUsage) => resetFirstTimeSetup(clearUsage === true));
 ipcMain.handle('alerts:save', (_event, alerts) => saveAlertSettings(alerts));
 ipcMain.handle('alerts:silence', (_event, providerId) => silenceProviderAlerts(providerId));
@@ -1284,6 +1391,11 @@ ipcMain.handle('desktop-widget:toggle-visible', () => setDesktopLayout({ desktop
 ipcMain.handle('desktop-widget:set-editing', (_event, editing) => setDesktopLayout({ editing: Boolean(editing), desktopVisible: true }));
 ipcMain.handle('desktop-widget:anchor', () => setDesktopLayout({ autoPosition: true, x: null, y: null }));
 ipcMain.handle('desktop-widget:resize', (_event, delta) => adjustDesktopWidgetWidth(delta));
-ipcMain.on('desktop-widget:resize-panel', (_event, height) => resizeTrayPopover(height));
+ipcMain.on('desktop-widget:resize-panel', (_event, size) => {
+  const height = typeof size === 'object' ? size?.height : size;
+  const width = typeof size === 'object' ? size?.width : undefined;
+  resizeTrayPopover(height, width);
+});
+ipcMain.handle('desktop-widget:set-panel-layout', (_event, panelLayout) => setDesktopLayout({ panelLayout }));
 ipcMain.handle('desktop-widget:open-settings', () => { trayPopoverRef?.hide(); showControlCenter(); });
 ipcMain.handle('desktop-widget:exit', requestQuit);

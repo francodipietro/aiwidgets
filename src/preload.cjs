@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('aiwidgets', {
   refreshProviders: () => ipcRenderer.invoke('collector:refresh'),
   refreshProvider: (providerId) => ipcRenderer.invoke('collector:refresh-provider', providerId),
   disconnectProvider: (providerId, clearUsage) => ipcRenderer.invoke('collector:disconnect', providerId, clearUsage),
+  connectDeepSeek: (apiKey) => ipcRenderer.invoke('deepseek:connect', apiKey),
+  saveDeepSeekFundedBalance: (fundedBalance) => ipcRenderer.invoke('deepseek:save-funded', fundedBalance),
   resetOnboarding: (clearUsage) => ipcRenderer.invoke('onboarding:reset', clearUsage),
   saveAlerts: (alerts) => ipcRenderer.invoke('alerts:save', alerts),
   silenceAlerts: (providerId) => ipcRenderer.invoke('alerts:silence', providerId),

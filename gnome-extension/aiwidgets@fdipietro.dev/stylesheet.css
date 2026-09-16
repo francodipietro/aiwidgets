@@ -16,6 +16,9 @@
 .aiwidgets-desktop-card.copilot {
   background-color: rgba(43,46,53,.94);
 }
+.aiwidgets-desktop-card.deepseek {
+  background-color: rgba(11, 37, 88, .95);
+}
 .aiwidgets-desktop-header,
 .aiwidgets-panel-header {
   spacing: 6px;
@@ -56,6 +59,17 @@
   color: #d6dce8;
   y_align: end;
 }
+.aiwidgets-balance-consumption {
+  spacing: 0;
+}
+.aiwidgets-balance-available {
+  spacing: 0;
+}
+.aiwidgets-balance-amount {
+  font-size: 19px;
+  font-weight: 700;
+  color: #ffffff;
+}
 .aiwidgets-quota-bar {
   height: 5px;
   margin-top: 1px;
@@ -75,6 +89,10 @@
 .aiwidgets-panel-card.copilot .aiwidgets-quota-fill {
   background-color: #b8c0cc;
 }
+.aiwidgets-desktop-card.deepseek .aiwidgets-quota-fill,
+.aiwidgets-panel-card.deepseek .aiwidgets-quota-fill {
+  background-color: #5cc6ed;
+}
 .aiwidgets-quota-available,
 .aiwidgets-quota-empty {
   font-size: 9px;
@@ -89,11 +107,22 @@
   color: #b8c0cf;
 }
 .aiwidgets-panel-card {
-  min-width: 270px;
+  min-width: 0;
   margin: 5px 8px;
   padding: 12px 14px;
   border-radius: 12px;
   background-color: rgba(18, 37, 62, .96);
+}
+.aiwidgets-panel-row {
+  margin: 0;
+  padding: 0;
+}
+.aiwidgets-panel-grid {
+  spacing: 0;
+}
+.aiwidgets-panel-grid .aiwidgets-panel-card {
+  margin-left: 3px;
+  margin-right: 3px;
 }
 .aiwidgets-panel-indicator {
   padding: 0 8px;
@@ -107,6 +136,27 @@
 .aiwidgets-panel-card.copilot {
   background-color: rgba(43, 46, 53, .97);
 }
+.aiwidgets-panel-card.deepseek {
+  background-color: rgba(11, 37, 88, .97);
+}
+.aiwidgets-panel-card.compact {
+  margin: 3px 6px;
+  padding: 7px 9px;
+}
+.aiwidgets-panel-card.compact .aiwidgets-panel-card-title { font-size: 14px; }
+.aiwidgets-panel-card.compact .aiwidgets-quota { margin-top: 1px; spacing: 0; }
+.aiwidgets-panel-card.compact .aiwidgets-quota-value { font-size: 18px; }
+.aiwidgets-panel-card.compact .aiwidgets-quota-label,
+.aiwidgets-panel-card.compact .aiwidgets-quota-consumed { font-size: 9px; }
+.aiwidgets-panel-card.compact .aiwidgets-quota-reset { display: none; }
+.aiwidgets-panel-card.dense { margin: 2px 5px; padding: 6px 8px; }
+.aiwidgets-panel-card.dense .aiwidgets-panel-card-title { font-size: 14px; }
+.aiwidgets-panel-card.dense .aiwidgets-quota { margin-top: 2px; spacing: 1px; }
+.aiwidgets-panel-card.dense .aiwidgets-quota-label { font-size: 9px; }
+.aiwidgets-panel-card.dense .aiwidgets-quota-value { font-size: 20px; }
+.aiwidgets-panel-card.dense .aiwidgets-balance-amount { font-size: 18px; }
+.aiwidgets-panel-card.dense .aiwidgets-quota-available { display: block; font-size: 8px; }
+.aiwidgets-panel-card.dense .aiwidgets-quota-reset { display: none; }
 .aiwidgets-panel-card-title {
   font-size: 16px;
   font-weight: 700;

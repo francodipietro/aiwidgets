@@ -10,6 +10,7 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .desktop-root .widget-empty { min-height: 258px; }
 .widget-card.claude { background: rgba(47,31,28,.92); }
 .widget-card.copilot { background: rgba(43,46,53,.94); }
+.widget-card.deepseek { background: rgba(11,37,88,.95); }
 .widget-header { display: flex; gap: 6px; align-items: center; }
 .widget-header h2 { flex: 1; margin: 0; font-size: 17px; font-weight: 700; line-height: 1.2; }
 .widget-logo { width: 22px; height: 22px; object-fit: contain; }
@@ -22,6 +23,10 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .quota-summary { display: flex; min-height: 24px; gap: 5px; align-items: end; margin-top: 1px; }
 .quota-value { color: #fff; font-size: 22px; font-weight: 800; line-height: 1; }
 .quota-consumed { min-width: 0; overflow: hidden; color: #d6dce8; font-size: 10px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.balance-summary { justify-content: space-between; }
+.balance-summary > div { display: grid; gap: 1px; }
+.balance-summary .balance-available { margin-left: auto; text-align: right; }
+.balance-summary .balance-available strong { color: #fff; font-size: 19px; font-weight: 700; line-height: 1; }
 .quota-bar { height: 5px; margin-top: 5px; overflow: hidden; border-radius: 5px; background: rgba(226,229,240,.18); }
 .quota-fill { display: block; height: 100%; border-radius: inherit; background: #c9ddff; }
 .claude .quota-fill { background: #f2ae93; }
@@ -34,6 +39,11 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 body.editing .desktop-root, body.editing .desktop-root * { -webkit-app-region: drag; }
 .panel-root { min-height: 0; overflow: hidden; padding: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: rgba(18,24,35,.94); box-shadow: 0 12px 30px rgba(0,0,0,.3); }
 .panel-heading { margin: 3px 6px 9px; color: #fff; font-size: 14px; font-weight: 750; }
+.panel-layout { float: right; color: #aeb8c8; font-size: 10px; font-weight: 500; }
+.panel-layout select { margin-left: 3px; border: 0; border-radius: 5px; background: rgba(255,255,255,.12); color: #fff; font: inherit; }
+.panel-cards { display: grid; grid-template-columns: 1fr; gap: 0; }
+.panel-cards.two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; }
+.panel-cards.row { grid-template-columns: repeat(var(--provider-count, 4), minmax(0, 1fr)); column-gap: 8px; }
 .panel-card { width: 100%; min-height: 0; margin: 7px 0; padding: 12px 14px; border: 0; border-radius: 12px; background: rgba(18,37,62,.96); }
 .panel-card .quota-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .panel-card.claude { background: rgba(58,38,32,.96); }
@@ -44,6 +54,9 @@ body.editing .desktop-root, body.editing .desktop-root * { -webkit-app-region: d
 .panel-actions button { padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.1); color: #eef3fb; font-size: 12px; text-align: left; }
 .panel-actions button:hover { background: rgba(255,255,255,.17); }
 .panel-actions .danger { color: #ffd2d6; }
+.panel-actions details { border-radius: 8px; background: rgba(255,255,255,.06); color: #eef3fb; font-size: 12px; }
+.panel-actions summary { cursor: pointer; padding: 8px 10px; }
+.panel-actions details button { display: block; width: 100%; border-radius: 0; background: transparent; }
 .panel-compact .panel-root { padding: 6px; }
 .panel-compact .panel-heading { margin: 2px 4px 5px; font-size: 13px; }
 .panel-compact .panel-card { margin: 4px 0; padding: 8px 10px; }

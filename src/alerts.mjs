@@ -31,10 +31,11 @@ export const PROVIDER_QUOTAS = {
   ],
 };
 
-const ALERT_PROVIDER_IDS = Object.keys(PROVIDER_QUOTAS);
+const ALERT_PROVIDER_IDS = [...Object.keys(PROVIDER_QUOTAS), 'deepseek'];
 
 export const DEFAULT_ALERT_SETTINGS = {
-  providers: { claude: { enabled: false }, codex: { enabled: false }, copilot: { enabled: false } },
+  providers: { claude: { enabled: false }, codex: { enabled: false }, copilot: { enabled: false }, deepseek: { enabled: false } },
+  deepseekLowBalance: 1,
   failureMinutes: null,
 };
 
@@ -44,8 +45,10 @@ export function normaliseAlertSettings(raw) {
   const input = raw && typeof raw === 'object' ? raw : {};
   const providers = input.providers && typeof input.providers === 'object' ? input.providers : {};
   const failureMinutes = Number(input.failureMinutes);
+  const deepseekLowBalance = Number(input.deepseekLowBalance);
   return {
     providers: Object.fromEntries(ALERT_PROVIDER_IDS.map((id) => [id, { enabled: providers[id]?.enabled === true }])),
+    deepseekLowBalance: Number.isFinite(deepseekLowBalance) && deepseekLowBalance >= 0 && deepseekLowBalance <= 1_000_000 ? deepseekLowBalance : DEFAULT_ALERT_SETTINGS.deepseekLowBalance,
     // Anything other than an offered cadence disables the alert, so a hand
     // edited or future value never turns into a surprise notification loop.
     failureMinutes: FAILURE_MINUTES_CHOICES.includes(failureMinutes) ? failureMinutes : null,
@@ -73,6 +76,7 @@ export function normaliseAlertState(raw) {
     quotas: entries(quotas, (value) => ({
       periodKey: typeof value.periodKey === 'string' ? value.periodKey : null,
       lastStep: Number.isFinite(Number(value.lastStep)) ? Number(value.lastStep) : 0,
+      ...(Object.hasOwn(value, 'low') ? { low: value.low === true } : {}),
       observedAt: finiteOrNull(value.observedAt),
     })),
     failures: entries(failures, (value) => ({
@@ -187,6 +191,17 @@ export function pendingUsageAlerts({ data, alertState, now = Date.now() }) {
     // should not keep speaking. Its stored steps stay put for when it returns.
     if (!settings.providers[providerId].enabled || !enabledProviders.includes(providerId)) continue;
 
+    if (providerId === 'deepseek') {
+      const balance = provider.balance;
+      const amount = Number(balance?.totalBalance);
+      const key = quotaStateKey('deepseek', 'balance');
+      if (!Number.isFinite(amount) || !balance?.currency) { delete quotas[key]; continue; }
+      const wasLow = quotas[key]?.low === true;
+      const low = amount <= settings.deepseekLowBalance;
+      if (low && !wasLow) alerts.push({ kind: 'balance', providerId, providerName: provider.name || 'DeepSeek API', amount, currency: balance.currency, threshold: settings.deepseekLowBalance });
+      quotas[key] = { low, observedAt: now };
+      continue;
+    }
     for (const quota of PROVIDER_QUOTAS[providerId]) {
       const key = quotaStateKey(providerId, quota.key);
       const usage = provider[quota.key];
@@ -335,6 +350,10 @@ export function alertNotification(alert) {
       // otherwise there is no update to date, and saying so would be false.
       body: `${alert.message}${alert.ageLabel ? ` Last update was ${alert.ageLabel}.` : ' It has never updated successfully.'}`,
     };
+  }
+  if (alert.kind === 'balance') {
+    const amount = new Intl.NumberFormat('en-US', { style: 'currency', currency: alert.currency, maximumFractionDigits: 2 }).format(alert.amount);
+    return { title: `${alert.providerName} · low balance`, body: `${amount} remains available. Add funds or adjust your low-balance alert.` };
   }
   return {
     title: `${alert.providerName} · ${alert.quotaLabel} at ${alert.consumption}%`,

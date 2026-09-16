@@ -1,6 +1,6 @@
 import { DEFAULT_ALERT_SETTINGS, normaliseAlertSettings } from './alerts.mjs';
 
-export const PROVIDER_IDS = ['claude', 'codex', 'copilot'];
+export const PROVIDER_IDS = ['claude', 'codex', 'copilot', 'deepseek'];
 
 export const DEFAULT_DATA = {
   // Existing data files are considered set up unless they explicitly retain
@@ -11,6 +11,7 @@ export const DEFAULT_DATA = {
     { id: 'claude', name: 'Claude', accent: '#f2ae93', session: null, weekly: null, note: 'Not connected yet.' },
     { id: 'codex', name: 'Codex', accent: '#c9ddff', session: null, weekly: null, note: 'Not connected yet.' },
     { id: 'copilot', name: 'GitHub Copilot', accent: '#b8c0cc', monthly: null, actionsMinutes: null, note: 'Not connected yet.' },
+    { id: 'deepseek', name: 'DeepSeek API', accent: '#5cc6ed', balance: null, note: 'Not connected yet.' },
   ],
 };
 
@@ -75,6 +76,16 @@ export function normaliseUsageData(raw) {
       };
     };
     const weekly = usage(provider.weekly);
+    const balance = provider.balance && typeof provider.balance === 'object' ? (() => {
+      const currency = String(provider.balance.currency || '').toUpperCase();
+      const totalBalance = Number(provider.balance.totalBalance);
+      const grantedBalance = Number(provider.balance.grantedBalance);
+      const toppedUpBalance = Number(provider.balance.toppedUpBalance);
+      if (!['USD', 'CNY'].includes(currency) || ![totalBalance, grantedBalance, toppedUpBalance].every((value) => Number.isFinite(value) && value >= 0)) return null;
+      const fundedBalance = Number(provider.balance.fundedBalance);
+      const included = Number.isFinite(fundedBalance) && fundedBalance >= totalBalance ? fundedBalance : totalBalance;
+      return { currency, totalBalance, grantedBalance, toppedUpBalance, fundedBalance: included, used: Math.max(0, included - totalBalance), included, isAvailable: provider.balance.isAvailable === true };
+    })() : null;
     const placeholder = provider.note === 'No data yet.' && !provider.session && weekly?.available === 100;
     return {
       ...fallback,
@@ -84,6 +95,7 @@ export function normaliseUsageData(raw) {
       weekly: placeholder ? null : weekly,
       monthly: usage(provider.monthly),
       actionsMinutes: usage(provider.actionsMinutes),
+      balance,
       note: String(provider.note || ''),
     };
   });

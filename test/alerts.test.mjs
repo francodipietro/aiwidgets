@@ -47,6 +47,20 @@ test('a malformed or unknown settings block normalises to silent', () => {
   assert.equal(normaliseAlertSettings({ providers: { claude: { enabled: 'yes' } } }).providers.claude.enabled, false);
 });
 
+test('a DeepSeek low-balance alert is opt-in and only fires once per low-balance episode', () => {
+  const data = {
+    settings: { enabledProviders: ['deepseek'], alerts: { providers: { deepseek: { enabled: true } }, deepseekLowBalance: 1, failureMinutes: null } },
+    providers: [{ id: 'deepseek', name: 'DeepSeek API', balance: { currency: 'USD', totalBalance: 0.5 } }],
+  };
+  const first = pendingUsageAlerts({ data, alertState: {}, now: NOW });
+  assert.equal(first.alerts[0].kind, 'balance');
+  const repeat = pendingUsageAlerts({ data, alertState: first.state, now: NOW + MINUTE });
+  assert.deepEqual(repeat.alerts, []);
+  const restored = pendingUsageAlerts({ data: { ...data, providers: [{ ...data.providers[0], balance: { currency: 'USD', totalBalance: 2 } }] }, alertState: repeat.state, now: NOW + 2 * MINUTE });
+  const lowAgain = pendingUsageAlerts({ data, alertState: restored.state, now: NOW + 3 * MINUTE });
+  assert.equal(lowAgain.alerts.length, 1);
+});
+
 test('announces only the highest step crossed, so a jump is one notification', () => {
   const data = profile({
     session: { available: 20, resetLabel: null, resetsAt: null },

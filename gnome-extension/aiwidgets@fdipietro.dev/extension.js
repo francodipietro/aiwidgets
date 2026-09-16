@@ -15,12 +15,26 @@ const DATA_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'aiwidgets',
 const LAYOUT_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'aiwidgets', 'desktop-widget.json']);
 const RUNTIME_PATH = GLib.build_filenamev([GLib.get_user_config_dir(), 'aiwidgets', 'runtime.json']);
 const LAYOUT_VERSION = 3;
-const DEFAULT_LAYOUT = { version: LAYOUT_VERSION, x: null, y: null, cardWidth: 170, desktopVisible: true, editing: false, autoPosition: true };
-const PROVIDER_IDS = ['claude', 'codex', 'copilot'];
+const DEFAULT_LAYOUT = { version: LAYOUT_VERSION, x: null, y: null, cardWidth: 170, desktopVisible: true, editing: false, autoPosition: true, panelLayout: 'one-column' };
+const PROVIDER_IDS = ['claude', 'codex', 'copilot', 'deepseek'];
+const PANEL_LAYOUTS = [
+  ['one-column', 'One column'],
+  ['two-columns', 'Two columns'],
+  ['row', 'One row'],
+];
 
 function enabledProviderIds(data) {
   const configured = data.settings?.enabledProviders;
   return Array.isArray(configured) ? configured.filter((id) => PROVIDER_IDS.includes(id)) : ['claude', 'codex'];
+}
+
+function normalisePanelLayout(layout) {
+  if (PANEL_LAYOUTS.some(([id]) => id === layout?.panelLayout)) return layout.panelLayout;
+  return Number(layout?.panelColumns) === 2 ? 'two-columns' : 'one-column';
+}
+
+function panelLayoutLabel(layout) {
+  return PANEL_LAYOUTS.find(([id]) => id === layout)?.[1] || 'One column';
 }
 
 function usageBlock(usage, label, width) {
@@ -49,10 +63,45 @@ function usageBlock(usage, label, width) {
   return block;
 }
 
+function balanceBlock(balance, width) {
+  const block = new St.BoxLayout({ vertical: true, style_class: 'aiwidgets-quota' });
+  block.add_child(new St.Label({ text: 'API balance', style_class: 'aiwidgets-quota-label' }));
+  const total = Number(balance?.included);
+  const available = Number(balance?.totalBalance);
+  const used = Number(balance?.used);
+  const currency = balance?.currency || 'USD';
+  if (![total, available, used].every(Number.isFinite)) {
+    block.add_child(new St.Label({ text: '— no data', style_class: 'aiwidgets-quota-empty' }));
+    return block;
+  }
+  const money = new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 2 });
+  const summary = new St.BoxLayout({ style_class: 'aiwidgets-quota-summary' });
+  const consumed = total > 0 ? Math.max(0, Math.min(100, used / total * 100)) : 0;
+  const consumption = new St.BoxLayout({ vertical: true, style_class: 'aiwidgets-balance-consumption' });
+  consumption.add_child(new St.Label({ text: `${Math.round(consumed)}%`, style_class: 'aiwidgets-quota-value' }));
+  consumption.add_child(new St.Label({ text: 'used', style_class: 'aiwidgets-quota-consumed' }));
+  const remaining = new St.BoxLayout({ vertical: true, x_expand: true, style_class: 'aiwidgets-balance-available' });
+  remaining.add_child(new St.Label({ text: money.format(available), x_align: Clutter.ActorAlign.END, style_class: 'aiwidgets-balance-amount' }));
+  remaining.add_child(new St.Label({ text: 'available', x_align: Clutter.ActorAlign.END, style_class: 'aiwidgets-quota-consumed' }));
+  summary.add_child(consumption);
+  summary.add_child(remaining);
+  block.add_child(summary);
+  if (total > 0) {
+    const barWidth = Math.max(48, width - 24);
+    const bar = new St.BoxLayout({ style_class: 'aiwidgets-quota-bar', style: `width: ${barWidth}px;` });
+    bar.add_child(new St.Widget({ style_class: 'aiwidgets-quota-fill', style: `width: ${Math.max(2, Math.round(barWidth * consumed / 100))}px;` }));
+    block.add_child(bar);
+    block.add_child(new St.Label({ text: `${money.format(used)} used of ${money.format(total)} · ${money.format(available)} available`, style_class: 'aiwidgets-quota-available' }));
+  } else {
+    block.add_child(new St.Label({ text: 'No funded balance yet', style_class: 'aiwidgets-quota-available' }));
+  }
+  return block;
+}
+
 function cardHeader(name, id, scope, extensionPath) {
   const header = new St.BoxLayout({ style_class: `aiwidgets-${scope}-header` });
   header.add_child(new St.Label({ text: name, x_expand: true, style_class: `aiwidgets-${scope}-title` }));
-  const logo = id === 'claude' ? 'logo_claude.svg' : id === 'copilot' ? 'logo_copilot.png' : 'logo_chatgpt.svg';
+  const logo = id === 'claude' ? 'logo_claude.svg' : id === 'copilot' ? 'logo_copilot.png' : id === 'deepseek' ? 'logo_deepseek.svg' : 'logo_chatgpt.svg';
   header.add_child(new St.Icon({
     gicon: new Gio.FileIcon({ file: Gio.File.new_for_path(GLib.build_filenamev([extensionPath, logo])) }),
     icon_size: 22,
@@ -67,6 +116,7 @@ export default class AIWidgetsDesktopExtension extends Extension {
     this._layoutFile = Gio.File.new_for_path(LAYOUT_PATH);
     this._runtimeFile = Gio.File.new_for_path(RUNTIME_PATH);
     this._runtimeActive = true;
+    this._panelMode = 'full';
     this._layout = { ...DEFAULT_LAYOUT };
     this._widget = new St.BoxLayout({
       vertical: false,
@@ -106,7 +156,7 @@ export default class AIWidgetsDesktopExtension extends Extension {
     this._scrollId = this._widget.connect('scroll-event', (_actor, event) => this._resizeFromScroll(event));
 
     this._placeOnDesktopLayer();
-    this._monitorChangedId = Main.layoutManager.connect('monitors-changed', () => this._position());
+    this._monitorChangedId = Main.layoutManager.connect('monitors-changed', () => { this._panelMode = 'full'; this._position(); this._refresh(); });
     this._windowCreatedId = global.display.connect('window-created', () => {
       GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => { this._placeOnDesktopLayer(); return GLib.SOURCE_REMOVE; });
     });
@@ -159,9 +209,9 @@ export default class AIWidgetsDesktopExtension extends Extension {
       const [success, contents] = this._layoutFile.load_contents(null);
       if (!success) throw new Error('Could not read the saved layout.');
       const stored = JSON.parse(new TextDecoder().decode(contents));
-      // Reset the one-off layout from older builds: those cards were too
-      // large and started on top of Desktop Icons NG.
-      this._layout = stored.version === LAYOUT_VERSION ? { ...DEFAULT_LAYOUT, ...stored, editing: false } : { ...DEFAULT_LAYOUT };
+      this._layout = { ...DEFAULT_LAYOUT, ...stored, version: LAYOUT_VERSION, editing: false };
+      this._layout.panelLayout = normalisePanelLayout(stored);
+      delete this._layout.panelColumns;
     } catch { /* Default position and size on first launch. */ }
     this._position();
   }
@@ -238,16 +288,47 @@ export default class AIWidgetsDesktopExtension extends Extension {
   _renderPanel(data) {
     if (!this._panelButton || this._runtimeActive === false) return;
     this._panelButton.menu.removeAll();
+    this._panelButton.menu.actor.set_scale(1, 1);
+    this._panelButton.menu.actor.set_pivot_point(0, 0);
     const heading = new PopupMenu.PopupMenuItem('AI Widgets · usage', { reactive: false, can_focus: false });
     heading.label.style = 'font-weight: bold;';
     this._panelButton.menu.addMenuItem(heading);
 
     const providers = new Map((data.providers || []).map(provider => [provider.id, provider]));
-    for (const id of enabledProviderIds(data)) {
-      const provider = providers.get(id);
-      this._panelButton.menu.addMenuItem(this._createPanelCard(provider, id));
+    const providerIds = enabledProviderIds(data);
+    const monitor = Main.layoutManager.primaryMonitor;
+    // Keep the detailed cards by default. Compacting is a fallback after the
+    // menu has been measured against this monitor's usable height.
+    this._panelCompact = this._panelMode === 'dense';
+    const panelLayout = normalisePanelLayout(this._layout);
+    const cardsPerRow = panelLayout === 'row' ? Math.max(1, providerIds.length) : panelLayout === 'two-columns' ? 2 : 1;
+    this._panelCardWidth = Math.max(150, Math.min(270, Math.floor((monitor.width - 64) / cardsPerRow)));
+    for (let index = 0; index < providerIds.length; index += cardsPerRow) {
+      const ids = providerIds.slice(index, index + cardsPerRow);
+      if (cardsPerRow === 1) {
+        this._panelButton.menu.addMenuItem(this._createPanelCard(providers.get(ids[0]), ids[0]));
+        continue;
+      }
+      const row = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false, style_class: 'aiwidgets-panel-row' });
+      const cards = new St.BoxLayout({ style_class: 'aiwidgets-panel-grid' });
+      for (const id of ids) cards.add_child(this._createPanelCard(providers.get(id), id));
+      row.add_child(cards);
+      this._panelButton.menu.addMenuItem(row);
     }
     this._panelButton.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+    const layoutMenu = new PopupMenu.PopupSubMenuMenuItem(`Card layout: ${panelLayoutLabel(panelLayout)}`);
+    for (const [id, label] of PANEL_LAYOUTS) {
+      const option = new PopupMenu.PopupMenuItem(id === panelLayout ? `✓ ${label}` : label);
+      option.connect('activate', () => {
+        this._layout.panelLayout = id;
+        this._saveLayout();
+        this._panelMode = 'full';
+        this._renderPanel(this._lastData || data);
+      });
+      layoutMenu.menu.addMenuItem(option);
+    }
+    this._panelButton.menu.addMenuItem(layoutMenu);
+    const desktopMenu = new PopupMenu.PopupSubMenuMenuItem('Desktop cards');
     const action = new PopupMenu.PopupMenuItem(this._layout.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards');
     action.connect('activate', () => {
       this._layout.desktopVisible = this._layout.desktopVisible === false;
@@ -255,7 +336,7 @@ export default class AIWidgetsDesktopExtension extends Extension {
       this._saveLayout();
       this._renderPanel(this._lastData || data);
     });
-    this._panelButton.menu.addMenuItem(action);
+    desktopMenu.menu.addMenuItem(action);
     const editor = new PopupMenu.PopupMenuItem(this._layout.editing ? 'Pin cards to desktop' : 'Edit position and size');
     editor.connect('activate', () => {
       this._layout.editing = !this._layout.editing;
@@ -263,7 +344,7 @@ export default class AIWidgetsDesktopExtension extends Extension {
       if (!this._layout.editing) this._saveLayout();
       this._renderPanel(this._lastData || data);
     });
-    this._panelButton.menu.addMenuItem(editor);
+    desktopMenu.menu.addMenuItem(editor);
     const anchor = new PopupMenu.PopupMenuItem('Anchor at top right');
     anchor.connect('activate', () => {
       this._layout.autoPosition = true;
@@ -271,7 +352,8 @@ export default class AIWidgetsDesktopExtension extends Extension {
       this._position();
       this._saveLayout();
     });
-    this._panelButton.menu.addMenuItem(anchor);
+    desktopMenu.menu.addMenuItem(anchor);
+    this._panelButton.menu.addMenuItem(desktopMenu);
     const settings = new PopupMenu.PopupMenuItem('Open settings');
     settings.connect('activate', () => {
       try {
@@ -290,20 +372,46 @@ export default class AIWidgetsDesktopExtension extends Extension {
     const exit = new PopupMenu.PopupMenuItem('Exit AI Widgets');
     exit.connect('activate', () => this._requestExit());
     this._panelButton.menu.addMenuItem(exit);
+    const primaryIndex = global.display.get_primary_monitor();
+    // GNOME Shell 46 exposes work areas through LayoutManager; Meta.Display
+    // does not provide get_work_area_for_monitor in this runtime.
+    const workArea = Main.layoutManager.getWorkAreaForMonitor(primaryIndex);
+    const availableHeight = Math.max(1, workArea.height - (Main.panel?.height || 32) - 16);
+    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      const [, naturalHeight] = this._panelButton?.menu?.box?.get_preferred_height(-1) || [0, 0];
+      if (naturalHeight > availableHeight && this._panelMode === 'full') {
+        this._panelMode = 'dense';
+        this._renderPanel(data);
+      } else if (naturalHeight > 0) {
+        // Keep actual cards and bars even on short screens. The dense pass
+        // removes secondary reset details; scale only as a final fallback.
+        const scale = Math.min(1, availableHeight / naturalHeight);
+        this._panelButton?.menu?.actor?.set_scale(scale, scale);
+        this._panelButton?.menu?.actor?.set_pivot_point(0, 0);
+      }
+      return GLib.SOURCE_REMOVE;
+    });
   }
 
   _createPanelCard(provider, id) {
-    const card = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false, style_class: `aiwidgets-panel-card ${id}` });
+    const compact = this._panelCompact ? ' compact' : '';
+    const dense = this._panelMode === 'dense' ? ' dense' : '';
+    const card = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false, style_class: `aiwidgets-panel-card ${id}${compact}${dense}` });
+    // PopupBaseMenuItem validates constructor parameters on GNOME 46 and
+    // rejects `style` there; style is an actor property and must be assigned
+    // only after construction.
+    card.style = `width: ${this._panelCardWidth}px;`;
     const body = new St.BoxLayout({ vertical: true, x_expand: true });
-    const name = provider?.name || (id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : 'Codex');
+    const name = provider?.name || (id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : id === 'deepseek' ? 'DeepSeek API' : 'Codex');
     body.add_child(cardHeader(name, id, 'panel', this.path));
     if (id === 'copilot') {
-      body.add_child(usageBlock(provider?.monthly, provider?.monthly?.label || 'Premium requests', 238));
-      body.add_child(usageBlock(provider?.actionsMinutes, 'Actions minutes', 238));
-    }
-    else {
-      body.add_child(usageBlock(provider?.session, 'Session', 238));
-      body.add_child(usageBlock(provider?.weekly, 'Weekly', 238));
+      body.add_child(usageBlock(provider?.monthly, provider?.monthly?.label || 'Premium requests', this._panelCardWidth - 22));
+      body.add_child(usageBlock(provider?.actionsMinutes, 'Actions minutes', this._panelCardWidth - 22));
+    } else if (id === 'deepseek') {
+      body.add_child(balanceBlock(provider?.balance, this._panelCardWidth - 22));
+    } else {
+      body.add_child(usageBlock(provider?.session, 'Session', this._panelCardWidth - 22));
+      body.add_child(usageBlock(provider?.weekly, 'Weekly', this._panelCardWidth - 22));
     }
     card.add_child(body);
     return card;
@@ -352,14 +460,14 @@ export default class AIWidgetsDesktopExtension extends Extension {
     this._widget.get_children().forEach(child => child.destroy());
     const providers = new Map((data.providers || []).map(provider => [provider.id, provider]));
     for (const id of enabledProviderIds(data)) {
-      const fallbackName = id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : 'Codex';
+      const fallbackName = id === 'claude' ? 'Claude' : id === 'copilot' ? 'GitHub Copilot' : id === 'deepseek' ? 'DeepSeek API' : 'Codex';
       const provider = providers.get(id) || { name: fallbackName, note: data.error || 'No data.' };
       const card = new St.BoxLayout({ vertical: true, style_class: `aiwidgets-desktop-card ${id}`, style: `width: ${this._layout.cardWidth}px;` });
       card.add_child(cardHeader(provider.name, id, 'desktop', this.path));
       if (id === 'copilot') {
         card.add_child(usageBlock(provider.monthly, provider.monthly?.label || 'Premium requests', this._layout.cardWidth - 22));
         card.add_child(usageBlock(provider.actionsMinutes, 'Actions minutes', this._layout.cardWidth - 22));
-      }
+      } else if (id === 'deepseek') card.add_child(balanceBlock(provider.balance, this._layout.cardWidth - 22));
       else {
         card.add_child(usageBlock(provider.session, 'Session', this._layout.cardWidth - 22));
         card.add_child(usageBlock(provider.weekly, 'Weekly', this._layout.cardWidth - 22));

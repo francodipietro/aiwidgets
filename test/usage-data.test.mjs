@@ -34,7 +34,12 @@ test('creates a new profile with no providers and onboarding pending', () => {
     onboardingComplete: false,
     alerts: DEFAULT_ALERT_SETTINGS,
   });
-  assert.deepEqual(created.providers.map(({ id }) => id), ['claude', 'codex', 'copilot']);
+  assert.deepEqual(created.providers.map(({ id }) => id), ['claude', 'codex', 'copilot', 'deepseek']);
+});
+
+test('keeps a valid DeepSeek balance as monetary data rather than a percentage quota', () => {
+  const data = normaliseUsageData({ providers: [{ id: 'deepseek', balance: { currency: 'USD', totalBalance: 9, grantedBalance: 2, toppedUpBalance: 10, used: 999, included: 999 } }] });
+  assert.deepEqual(data.providers.find((provider) => provider.id === 'deepseek').balance, { currency: 'USD', totalBalance: 9, grantedBalance: 2, toppedUpBalance: 10, fundedBalance: 9, used: 0, included: 9, isAvailable: false });
 });
 
 test('keeps explicit onboarding pending and discards invalid provider ids', () => {

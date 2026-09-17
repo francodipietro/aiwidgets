@@ -140,7 +140,8 @@ Objetivo: instalar y actualizar con seguridad en ambas plataformas.
 - [ ] Definir versionado y notas de release.
 - [ ] Firmar y notarizar los paquetes de macOS antes de ofrecer instalación
   directa.
-- [ ] Preparar paquetes `.deb` versionados para Ubuntu.
+- [x] Preparar paquetes `.deb` versionados para Ubuntu, con la extensión GNOME
+  (menú superior y tarjetas de escritorio) incluida en el paquete.
 - [ ] Publicar un repositorio APT firmado para que `apt update` actualice el
   índice y `apt upgrade` instale versiones nuevas.
 - [ ] Crear instalador one-liner que detecte macOS/Ubuntu, descargue el
@@ -158,31 +159,33 @@ Objetivo: sumar un proveedor que no se conecta por página web sino por API key,
 y que expone saldo en lugar de cuota de porcentaje. Es el primer proveedor de
 este tipo y sienta el patrón para futuros proveedores por API.
 
-- [ ] Guardar la API key cifrada con `safeStorage` en un archivo propio
+- [x] Guardar la API key cifrada con `safeStorage` en un archivo propio
   (`deepseek-credentials.json`), nunca en `usage.json`.
-- [ ] Leer el balance desde `GET https://api.deepseek.com/user/balance` con un
+- [x] Leer el balance desde `GET https://api.deepseek.com/user/balance` con un
   colector por `fetch` (nuevo tipo `api` junto al de páginas en `main.js`).
-- [ ] Barra única de disponibilidad: denominador = `granted_balance +
-  topped_up_balance`, disponible = `total_balance`, y usado derivado por resta
-  (`used = granted + topped_up − total_balance`), que es el "Total cost" de la
-  web. No hace falta historial local ni un denominador inventado.
-- [ ] Las recargas no requieren lógica especial: `topped_up_balance` y
-  `total_balance` suben juntos, así que `used` no cambia y la barra se rellena
-  sola. Mostrar un umbral configurable de "saldo bajo".
-- [ ] Onboarding y tarjeta DeepSeek con una acción "Conectar" que pide la API
+- [x] Mantener un total financiado local para complementar la respuesta de la
+  API —que expone saldo disponible, no el coste histórico total— y derivar
+  `used = funded − available`. El usuario puede fijar el monto inicial y una
+  subida del saldo se reconoce como recarga, no como consumo.
+- [x] Mostrar porcentaje usado, barra de consumo y dinero disponible; incluir
+  un umbral configurable de "saldo bajo".
+- [x] Onboarding y tarjeta DeepSeek con una acción "Conectar" que pide la API
   key (no una ventana de login).
-- [ ] Alerta opcional de saldo bajo, respetando el modelo de opt-in de la
+- [x] Alerta opcional de saldo bajo, respetando el modelo de opt-in de la
   Fase 5.
-- [ ] "Disconnect" borra la key cifrada; reutilizar el flujo de privacidad de
+- [x] "Disconnect" borra la key cifrada; reutilizar el flujo de privacidad de
   la Fase 4.
-- [ ] Fixtures y pruebas de parseo del balance (`total_balance`,
+- [x] Reflejar las métricas de DeepSeek en la app, las tarjetas de escritorio
+  y los paneles de GNOME y macOS. Los paneles permiten una, dos o una fila de
+  tarjetas y conservan la elección.
+- [x] Fixtures y pruebas de parseo del balance (`total_balance`,
   `granted_balance`, `topped_up_balance`, moneda), recarga y errores (401 =
   key inválida).
 
-Criterio de aceptación: la key nunca queda en texto plano en disco, la barra de
-disponibilidad refleja el saldo real (`available / total` y usado derivado) y
-una recarga rellena la barra sin reinterpretar el aumento como consumo. El dato
-queda local e igual en macOS y Ubuntu.
+Criterio de aceptación: la key nunca queda en texto plano en disco, la barra
+refleja el consumo frente al total financiado local y una recarga no se
+reinterpreta como consumo. Porcentaje, saldo disponible y estado quedan
+locales y son consistentes en macOS y Ubuntu.
 
 ## Backlog posterior
 

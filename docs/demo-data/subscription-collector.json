@@ -1,0 +1,11 @@
+{
+  "providers": {
+    "claude": { "configured": true, "lastSuccess": "2026-09-16T23:10:38.000Z", "status": "Updated just now." },
+    "codex": { "configured": true, "lastSuccess": "2026-09-16T23:10:38.000Z", "status": "Updated just now." },
+    "copilot": {
+      "premium": { "configured": true, "lastSuccess": "2026-09-16T23:10:38.000Z", "status": "Updated just now." },
+      "actions": { "configured": true, "lastSuccess": "2026-09-16T23:10:38.000Z", "status": "Updated just now." }
+    },
+    "deepseek": { "configured": true, "lastSuccess": "2026-09-16T23:10:38.000Z", "status": "Updated just now." }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "settings": { "refreshMinutes": 1, "enabledProviders": ["claude", "codex", "copilot", "deepseek"], "onboardingComplete": true },
+  "updatedAt": "2026-09-16T23:10:38.000Z",
+  "providers": [
+    { "id": "claude", "name": "Claude", "accent": "#f2ae93", "session": { "available": 58, "resetLabel": "Resets in 2 hr" }, "weekly": { "available": 71, "resetLabel": "Resets Friday" }, "note": "Updated just now." },
+    { "id": "codex", "name": "Codex", "accent": "#c9ddff", "session": { "available": 32, "resetLabel": "Resets in 5 hr" }, "weekly": { "available": 64, "resetLabel": "Resets Sunday" }, "note": "Updated just now." },
+    { "id": "copilot", "name": "GitHub Copilot", "accent": "#b8c0cc", "monthly": { "available": 78, "label": "Premium requests", "resetLabel": "Resets Oct 1" }, "actionsMinutes": { "available": 43, "used": 1140, "included": 2000, "resetLabel": "Resets Oct 1" }, "note": "Updated just now." },
+    { "id": "deepseek", "name": "DeepSeek API", "accent": "#5cc6ed", "balance": { "currency": "USD", "totalBalance": 13.8, "grantedBalance": 0, "toppedUpBalance": 13.8, "fundedBalance": 20, "used": 6.2, "included": 20, "isAvailable": true }, "note": "Updated just now." }
+  ]
+}

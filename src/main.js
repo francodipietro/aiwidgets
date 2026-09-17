@@ -60,6 +60,7 @@ const PROVIDER_IDS = ['claude', 'codex', 'copilot', 'deepseek'];
 const PAGE_PROVIDER_IDS = ['claude', 'codex', 'copilot'];
 const API_PROVIDER_IDS = ['deepseek'];
 const GNOME_EXTENSION_UUID = 'aiwidgets@fdipietro.dev';
+const GNOME_USER_EXTENSION_DIRECTORY = path.join('.local', 'share', 'gnome-shell', 'extensions', GNOME_EXTENSION_UUID);
 const MAC_WIDGET_SPACING = 20;
 const MAC_WIDGET_MARGIN = 28;
 const MAC_WIDGET_HEIGHT = 286;
@@ -160,9 +161,19 @@ function runCommand(command, args) {
 
 async function gnomeIntegrationState() {
   if (process.platform !== 'linux') return { supported: false, installed: false, enabled: false };
+  const desktop = String(process.env.XDG_CURRENT_DESKTOP || '').toLowerCase();
+  if (!desktop.includes('gnome')) return { supported: false, installed: false, enabled: false };
   try {
     const info = await runCommand('gnome-extensions', ['info', GNOME_EXTENSION_UUID]);
-    return { supported: true, installed: true, enabled: /^Enabled:\s+Yes$/mi.test(info), active: /^State:\s+ACTIVE$/mi.test(info) };
+    const extensionPath = info.match(/^Path:\s*(.+)$/mi)?.[1]?.trim() || '';
+    const userExtensionPath = path.join(app.getPath('home'), GNOME_USER_EXTENSION_DIRECTORY);
+    return {
+      supported: true,
+      installed: true,
+      enabled: /^Enabled:\s+Yes$/mi.test(info),
+      active: /^State:\s+ACTIVE$/mi.test(info),
+      needsMigration: extensionPath === userExtensionPath,
+    };
   } catch {
     return { supported: true, installed: false, enabled: false, active: false };
   }
@@ -172,6 +183,14 @@ async function enableGnomeIntegration() {
   if (process.platform !== 'linux') throw new Error('GNOME desktop integration is only available on Linux.');
   const state = await gnomeIntegrationState();
   if (!state.installed) throw new Error('The bundled GNOME extension is not installed. Reinstall AI Widgets.');
+  // Older releases installed the extension per-user from a ZIP. GNOME gives
+  // that copy priority over the system copy now shipped in the .deb. This is
+  // deliberately user-triggered: it removes only the old duplicate and then
+  // enables the packaged extension.
+  if (state.needsMigration) {
+    await runCommand('gnome-extensions', ['disable', GNOME_EXTENSION_UUID]);
+    await runCommand('gnome-extensions', ['uninstall', GNOME_EXTENSION_UUID]);
+  }
   await runCommand('gnome-extensions', ['enable', GNOME_EXTENSION_UUID]);
   return gnomeIntegrationState();
 }

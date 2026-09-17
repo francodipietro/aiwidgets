@@ -22,6 +22,7 @@ let historyStatus = '';
 let timer;
 let lastRequestedHeight;
 let enablingDesktopIntegration = false;
+let desktopIntegrationError = '';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const percentage = (usage) => usage ? Math.round(usage.available) : null;
@@ -99,8 +100,9 @@ function card(provider) {
 
 function desktopIntegrationNotice() {
   const integration = state.desktopIntegration;
-  if (!integration?.supported || integration.enabled) return '';
-  return `<section class="desktop-integration"><div><b>Enable GNOME desktop integration</b><small>The installed AI Widgets package includes the top-panel menu and desktop cards.</small></div><button data-action="enable-desktop-integration" ${enablingDesktopIntegration ? 'disabled' : ''}>${enablingDesktopIntegration ? 'Enabling…' : 'Enable'}</button></section>`;
+  if (!integration?.supported || (integration.enabled && !integration.needsMigration)) return '';
+  const migrating = integration.needsMigration === true;
+  return `<section class="desktop-integration"><div><b>${migrating ? 'Update GNOME desktop integration' : 'Enable GNOME desktop integration'}</b><small>${migrating ? 'Replace the older per-user extension with the version included in this AI Widgets package.' : 'The installed AI Widgets package includes the top-panel menu and desktop cards.'}</small>${desktopIntegrationError ? `<small class="desktop-integration-error">${escapeHtml(desktopIntegrationError)}</small>` : ''}</div><button data-action="enable-desktop-integration" ${enablingDesktopIntegration ? 'disabled' : ''}>${enablingDesktopIntegration ? 'Working…' : migrating ? 'Use bundled version' : 'Enable'}</button></section>`;
 }
 
 function integrationPanel(providerIds = ['claude', 'codex', 'copilot', 'deepseek']) {
@@ -324,8 +326,9 @@ app.addEventListener('click', async (event) => {
     return render();
   }
   if (action === 'enable-desktop-integration') {
-    enablingDesktopIntegration = true; render();
+    enablingDesktopIntegration = true; desktopIntegrationError = ''; render();
     try { state.desktopIntegration = await window.aiwidgets.enableDesktopIntegration(); }
+    catch (error) { desktopIntegrationError = error.message || 'Could not enable GNOME desktop integration.'; }
     finally { enablingDesktopIntegration = false; }
     return render();
   }

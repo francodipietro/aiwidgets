@@ -21,5 +21,7 @@ contextBridge.exposeInMainWorld('aiwidgets', {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   close: () => ipcRenderer.invoke('window:close'),
   onUsageChanged: (callback) => ipcRenderer.on('usage:changed', callback),
-  onCollectorChanged: (callback) => ipcRenderer.on('collector:changed', callback)
+  onCollectorChanged: (callback) => ipcRenderer.on('collector:changed', callback),
+  desktopIntegrationState: () => ipcRenderer.invoke('desktop-integration:state'),
+  enableDesktopIntegration: () => ipcRenderer.invoke('desktop-integration:enable')
 });

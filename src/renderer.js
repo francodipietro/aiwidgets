@@ -21,6 +21,8 @@ let managingHistory = false;
 let historyStatus = '';
 let timer;
 let lastRequestedHeight;
+let enablingDesktopIntegration = false;
+let desktopIntegrationError = '';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const percentage = (usage) => usage ? Math.round(usage.available) : null;
@@ -94,6 +96,18 @@ function card(provider) {
     <div class="usage-row ${provider.id === 'deepseek' ? 'single-usage' : ''}">${provider.id === 'copilot' ? `${meter(provider.monthly, provider.monthly?.label || 'Premium requests')}${actionsMeter(provider.actionsMinutes)}` : provider.id === 'deepseek' ? balanceMeter(provider.balance) : `${meter(provider.session, 'Session')}${meter(provider.weekly, 'Weekly')}`}</div>
     <p class="note health ${health.state}">${escapeHtml(health.message)}${reconnect}${silence}</p>
   </article>`;
+}
+
+function desktopIntegrationNotice() {
+  const integration = state.desktopIntegration;
+  if (!integration?.supported || (integration.enabled && !integration.needsMigration)) return '';
+  const migrating = integration.needsMigration === true;
+  const description = migrating
+    ? 'Replace the older per-user extension with the version included in this AI Widgets package.'
+    : integration.bundled
+      ? 'The installed AI Widgets package includes the top-panel menu and desktop cards.'
+      : 'Enable the installed GNOME top-panel menu and desktop cards.';
+  return `<section class="desktop-integration"><div><b>${migrating ? 'Update GNOME desktop integration' : 'Enable GNOME desktop integration'}</b><small>${description}</small>${desktopIntegrationError ? `<small class="desktop-integration-error">${escapeHtml(desktopIntegrationError)}</small>` : ''}</div><button data-action="enable-desktop-integration" ${enablingDesktopIntegration ? 'disabled' : ''}>${enablingDesktopIntegration ? 'Working…' : migrating ? 'Use bundled version' : 'Enable'}</button></section>`;
 }
 
 function integrationPanel(providerIds = ['claude', 'codex', 'copilot', 'deepseek']) {
@@ -264,7 +278,7 @@ function render() {
     ? '<button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>'
     : `<button data-action="providers">Providers</button><button data-action="alerts">Alerts</button><button data-action="history">History</button><button data-action="integrate">${integrating ? 'Close connection' : 'Connect accounts'}</button><button class="minimize" data-action="minimize" title="Minimize">—</button><button class="close" data-action="close" title="Hide window">×</button>`;
   app.innerHTML = `<header class="drag"><span class="title">AI Widgets</span><span class="subtitle">${onboarding ? 'First-time setup' : `Settings and connection · ${updated}`}</span><nav class="no-drag">${navigation}</nav></header>
-    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : connectingDeepSeek ? deepSeekConnectPanel() : editingDeepSeekFunding ? deepSeekFundingPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : managingAlerts ? alertPanel() : managingHistory ? historyPanel() : `<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
+    ${onboarding ? onboardingPanel() : privacyConfirmation ? privacyConfirmationPanel() : connectingDeepSeek ? deepSeekConnectPanel() : editingDeepSeekFunding ? deepSeekFundingPanel() : integrating ? integrationPanel(setupProviderIds ?? undefined) : managingProviders ? providerPanel() : managingAlerts ? alertPanel() : managingHistory ? historyPanel() : `${desktopIntegrationNotice()}<section class="cards">${visibleProviders.map(card).join('') || '<p class="empty-state">No providers selected.</p>'}</section>`}`;
   requestAnimationFrame(() => {
     const height = Math.ceil(app.scrollHeight);
     if (height === lastRequestedHeight) return;
@@ -314,6 +328,13 @@ app.addEventListener('click', async (event) => {
   }
   if (action === 'history') {
     managingHistory = !managingHistory; managingProviders = false; managingAlerts = false; integrating = false; setupProviderIds = null; privacyConfirmation = null; historyStatus = '';
+    return render();
+  }
+  if (action === 'enable-desktop-integration') {
+    enablingDesktopIntegration = true; desktopIntegrationError = ''; render();
+    try { state.desktopIntegration = await window.aiwidgets.enableDesktopIntegration(); }
+    catch (error) { desktopIntegrationError = error.message || 'Could not enable GNOME desktop integration.'; }
+    finally { enablingDesktopIntegration = false; }
     return render();
   }
   if (action === 'close-history') { managingHistory = false; historyStatus = ''; return render(); }

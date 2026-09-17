@@ -9,6 +9,9 @@ const dist = path.join(root, 'dist');
 const unpacked = path.join(dist, 'linux-unpacked');
 const stage = path.join(dist, '.deb-staging');
 const appIcon = path.join(root, 'imgs', 'logo_app.svg');
+const gnomeExtension = path.join(root, 'gnome-extension', 'aiwidgets@fdipietro.dev');
+const gnomeExtensionTarget = path.join('usr', 'share', 'gnome-shell', 'extensions', 'aiwidgets@fdipietro.dev');
+const gnomeExtensionAssets = ['logo_chatgpt.svg', 'logo_claude.svg', 'logo_copilot.png', 'logo_deepseek.svg'];
 const metadata = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 const output = path.join(dist, `aiwidgets_${metadata.version}_amd64.deb`);
 
@@ -26,8 +29,8 @@ Architecture: amd64
 Maintainer: AI Widgets
 Depends: libasound2t64 | libasound2, libatk-bridge2.0-0, libatk1.0-0, libc6, libcairo2, libdrm2, libgbm1, libglib2.0-0, libgtk-3-0, libnss3, libpango-1.0-0, libx11-6, libx11-xcb1, libxcb1, libxcomposite1, libxdamage1, libxext6, libxfixes3, libxkbcommon0, libxrandr2, libxss1, libxtst6, xdg-utils
 Description: Local subscription usage widgets for AI services
- Electron control window for Claude, Codex, and GitHub Copilot usage, paired with an optional
- GNOME Shell desktop widget and top-panel menu.
+ Electron control window for Claude, Codex, GitHub Copilot, and DeepSeek API usage,
+ including the bundled GNOME Shell desktop widget and top-panel menu.
 `;
 const postinst = `#!/bin/sh
 set -e
@@ -72,6 +75,8 @@ try {
   await mkdir(path.join(stage, 'etc', 'xdg', 'autostart'), { recursive: true });
   await mkdir(path.join(stage, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps'), { recursive: true });
   await cp(unpacked, path.join(stage, 'opt', 'aiwidgets'), { recursive: true, preserveTimestamps: true });
+  await cp(gnomeExtension, path.join(stage, gnomeExtensionTarget), { recursive: true, preserveTimestamps: true });
+  await Promise.all(gnomeExtensionAssets.map((asset) => cp(path.join(root, 'imgs', asset), path.join(stage, gnomeExtensionTarget, asset))));
   await cp(appIcon, path.join(stage, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps', 'aiwidgets.svg'));
   await Promise.all([
     writeFile(path.join(stage, 'DEBIAN', 'control'), control),

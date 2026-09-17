@@ -61,6 +61,7 @@ const PAGE_PROVIDER_IDS = ['claude', 'codex', 'copilot'];
 const API_PROVIDER_IDS = ['deepseek'];
 const GNOME_EXTENSION_UUID = 'aiwidgets@fdipietro.dev';
 const GNOME_USER_EXTENSION_DIRECTORY = path.join('.local', 'share', 'gnome-shell', 'extensions', GNOME_EXTENSION_UUID);
+const GNOME_SYSTEM_EXTENSION_DIRECTORY = path.join('/usr', 'share', 'gnome-shell', 'extensions', GNOME_EXTENSION_UUID);
 const MAC_WIDGET_SPACING = 20;
 const MAC_WIDGET_MARGIN = 28;
 const MAC_WIDGET_HEIGHT = 286;
@@ -159,6 +160,15 @@ function runCommand(command, args) {
   }));
 }
 
+async function bundledGnomeExtensionInstalled() {
+  try {
+    const metadata = JSON.parse(await readFile(path.join(GNOME_SYSTEM_EXTENSION_DIRECTORY, 'metadata.json'), 'utf8'));
+    return metadata?.uuid === GNOME_EXTENSION_UUID;
+  } catch {
+    return false;
+  }
+}
+
 async function gnomeIntegrationState() {
   if (process.platform !== 'linux') return { supported: false, installed: false, enabled: false };
   const desktop = String(process.env.XDG_CURRENT_DESKTOP || '').toLowerCase();
@@ -167,12 +177,14 @@ async function gnomeIntegrationState() {
     const info = await runCommand('gnome-extensions', ['info', GNOME_EXTENSION_UUID]);
     const extensionPath = info.match(/^Path:\s*(.+)$/mi)?.[1]?.trim() || '';
     const userExtensionPath = path.join(app.getPath('home'), GNOME_USER_EXTENSION_DIRECTORY);
+    const bundled = await bundledGnomeExtensionInstalled();
     return {
       supported: true,
       installed: true,
       enabled: /^Enabled:\s+Yes$/mi.test(info),
       active: /^State:\s+ACTIVE$/mi.test(info),
-      needsMigration: extensionPath === userExtensionPath,
+      bundled,
+      needsMigration: bundled && extensionPath === userExtensionPath,
     };
   } catch {
     return { supported: true, installed: false, enabled: false, active: false };
@@ -188,6 +200,7 @@ async function enableGnomeIntegration() {
   // deliberately user-triggered: it removes only the old duplicate and then
   // enables the packaged extension.
   if (state.needsMigration) {
+    if (!(await bundledGnomeExtensionInstalled())) throw new Error('The bundled GNOME extension is no longer installed. Reinstall AI Widgets.');
     await runCommand('gnome-extensions', ['disable', GNOME_EXTENSION_UUID]);
     await runCommand('gnome-extensions', ['uninstall', GNOME_EXTENSION_UUID]);
   }

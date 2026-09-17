@@ -102,7 +102,12 @@ function desktopIntegrationNotice() {
   const integration = state.desktopIntegration;
   if (!integration?.supported || (integration.enabled && !integration.needsMigration)) return '';
   const migrating = integration.needsMigration === true;
-  return `<section class="desktop-integration"><div><b>${migrating ? 'Update GNOME desktop integration' : 'Enable GNOME desktop integration'}</b><small>${migrating ? 'Replace the older per-user extension with the version included in this AI Widgets package.' : 'The installed AI Widgets package includes the top-panel menu and desktop cards.'}</small>${desktopIntegrationError ? `<small class="desktop-integration-error">${escapeHtml(desktopIntegrationError)}</small>` : ''}</div><button data-action="enable-desktop-integration" ${enablingDesktopIntegration ? 'disabled' : ''}>${enablingDesktopIntegration ? 'Working…' : migrating ? 'Use bundled version' : 'Enable'}</button></section>`;
+  const description = migrating
+    ? 'Replace the older per-user extension with the version included in this AI Widgets package.'
+    : integration.bundled
+      ? 'The installed AI Widgets package includes the top-panel menu and desktop cards.'
+      : 'Enable the installed GNOME top-panel menu and desktop cards.';
+  return `<section class="desktop-integration"><div><b>${migrating ? 'Update GNOME desktop integration' : 'Enable GNOME desktop integration'}</b><small>${description}</small>${desktopIntegrationError ? `<small class="desktop-integration-error">${escapeHtml(desktopIntegrationError)}</small>` : ''}</div><button data-action="enable-desktop-integration" ${enablingDesktopIntegration ? 'disabled' : ''}>${enablingDesktopIntegration ? 'Working…' : migrating ? 'Use bundled version' : 'Enable'}</button></section>`;
 }
 
 function integrationPanel(providerIds = ['claude', 'codex', 'copilot', 'deepseek']) {

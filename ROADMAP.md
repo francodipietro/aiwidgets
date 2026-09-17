@@ -140,7 +140,8 @@ Objetivo: instalar y actualizar con seguridad en ambas plataformas.
 - [ ] Definir versionado y notas de release.
 - [ ] Firmar y notarizar los paquetes de macOS antes de ofrecer instalación
   directa.
-- [ ] Preparar paquetes `.deb` versionados para Ubuntu.
+- [x] Preparar paquetes `.deb` versionados para Ubuntu, con la extensión GNOME
+  (menú superior y tarjetas de escritorio) incluida en el paquete.
 - [ ] Publicar un repositorio APT firmado para que `apt update` actualice el
   índice y `apt upgrade` instale versiones nuevas.
 - [ ] Crear instalador one-liner que detecte macOS/Ubuntu, descargue el

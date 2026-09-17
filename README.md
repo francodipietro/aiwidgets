@@ -5,7 +5,7 @@
 <h1 align="center">AI Widgets</h1>
 
 <p align="center">
-  <strong>Private, local usage widgets for your AI tools.</strong><br>
+  <strong>Your AI usage. Always in view. Always local.</strong><br>
   Claude · Codex · GitHub Copilot · DeepSeek API
 </p>
 
@@ -21,17 +21,34 @@ Ubuntu GNOME and macOS both provide desktop cards and a top-bar integration. The
 
 The app uses its own persistent, isolated browser profile to read the Claude, Codex, and GitHub Copilot usage pages. Chrome does not need to be open. Its local browser session retains the provider cookies needed to stay signed in; AI Widgets stores normalized usage values but does not retain conversations, page text, or a copied GitHub token. DeepSeek is queried directly with an API key that is stored separately with Electron `safeStorage` encryption.
 
-## See it in action
+## One local source, four useful views
 
-<p align="center">
-  <img src="docs/screenshots/linux-app.png" width="440" alt="AI Widgets control window on GNOME">
-  <img src="docs/screenshots/linux-history.png" width="440" alt="AI Widgets local usage history on GNOME">
-</p>
-
-<p align="center">
-  <img src="docs/screenshots/linux-panel-menu.png" width="230" alt="AI Widgets menu in the GNOME top panel">
-  <img src="docs/screenshots/linux-desktop-widget.png" width="600" alt="AI Widgets cards on the GNOME desktop">
-</p>
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/linux-app.png" alt="AI Widgets control window on GNOME"><br><br>
+      <strong>Control center</strong><br>
+      Connect accounts, refresh data, set DeepSeek funding, and read every quota or available balance in one private local app.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/linux-history.png" alt="AI Widgets local usage history on GNOME"><br><br>
+      <strong>Usage history</strong><br>
+      Follow how each quota changes over time. History stays on your machine and needs no external service.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/linux-panel-menu.png" alt="AI Widgets menu in the GNOME top panel"><br><br>
+      <strong>Top-panel menu</strong><br>
+      Check compact cards without leaving your workflow, switch the layout, refresh usage, or manage desktop cards from the GNOME panel.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/linux-desktop-widget.png" alt="AI Widgets cards on the GNOME desktop"><br><br>
+      <strong>Desktop cards</strong><br>
+      Keep the numbers and progress bars visible on the desktop. Move, resize, hide, or anchor the cards where they work best for you.
+    </td>
+  </tr>
+</table>
 
 ## Requirements
 

@@ -26,24 +26,26 @@ The app uses its own persistent, isolated browser profile to read the Claude, Co
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/linux-app.png" alt="AI Widgets control window on GNOME"><br><br>
+      <img src="docs/screenshots/linux-app.png" height="360" alt="AI Widgets control window on GNOME"><br><br>
       <strong>Control center</strong><br>
       Connect accounts, refresh data, set DeepSeek funding, and read every quota or available balance in one private local app.
     </td>
     <td width="50%" valign="top">
-      <img src="docs/screenshots/linux-history.png" alt="AI Widgets local usage history on GNOME"><br><br>
+      <img src="docs/screenshots/linux-history.png" height="360" alt="AI Widgets local usage history on GNOME"><br><br>
       <strong>Usage history</strong><br>
       Follow how each quota changes over time. History stays on your machine and needs no external service.
     </td>
   </tr>
   <tr>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/linux-panel-menu.png" alt="AI Widgets menu in the GNOME top panel"><br><br>
+    <td colspan="2" align="center" valign="top">
+      <img src="docs/screenshots/linux-panel-menu.png" height="390" alt="AI Widgets menu in the GNOME top panel"><br><br>
       <strong>Top-panel menu</strong><br>
       Check compact cards without leaving your workflow, switch the layout, refresh usage, or manage desktop cards from the GNOME panel.
     </td>
-    <td width="50%" valign="top">
-      <img src="docs/screenshots/linux-desktop-widget.png" alt="AI Widgets cards on the GNOME desktop"><br><br>
+  </tr>
+  <tr>
+    <td colspan="2" align="center" valign="top">
+      <img src="docs/screenshots/linux-desktop-widget.png" width="860" alt="AI Widgets cards on the GNOME desktop"><br><br>
       <strong>Desktop cards</strong><br>
       Keep the numbers and progress bars visible on the desktop. Move, resize, hide, or anchor the cards where they work best for you.
     </td>

@@ -1,10 +1,37 @@
-# AI Widgets
+<p align="center">
+  <img src="imgs/logo_app.svg" width="112" alt="AI Widgets logo">
+</p>
 
-Local, privacy-preserving usage widgets for Claude, Codex, GitHub Copilot, and DeepSeek API. AI Widgets shows session and weekly usage for Claude and Codex, monthly Premium requests and GitHub Actions minutes for Copilot, and API balance for DeepSeek.
+<h1 align="center">AI Widgets</h1>
+
+<p align="center">
+  <strong>Private, local usage widgets for your AI tools.</strong><br>
+  Claude · Codex · GitHub Copilot · DeepSeek API
+</p>
+
+<p align="center">
+  <a href="#install-on-ubuntu-gnome">Ubuntu GNOME</a> ·
+  <a href="#macos-desktop-widget-and-menu-bar">macOS</a> ·
+  <a href="#connect-subscriptions">Connect providers</a>
+</p>
+
+AI Widgets shows session and weekly usage for Claude and Codex, monthly Premium requests and GitHub Actions minutes for Copilot, and API balance for DeepSeek.
 
 Ubuntu GNOME and macOS both provide desktop cards and a top-bar integration. The Electron control window is shared; the native integrations render the same locally stored usage data.
 
 The app uses its own persistent, isolated browser profile to read the Claude, Codex, and GitHub Copilot usage pages. Chrome does not need to be open. Its local browser session retains the provider cookies needed to stay signed in; AI Widgets stores normalized usage values but does not retain conversations, page text, or a copied GitHub token. DeepSeek is queried directly with an API key that is stored separately with Electron `safeStorage` encryption.
+
+## See it in action
+
+<p align="center">
+  <img src="docs/screenshots/linux-app.png" width="440" alt="AI Widgets control window on GNOME">
+  <img src="docs/screenshots/linux-history.png" width="440" alt="AI Widgets local usage history on GNOME">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/linux-panel-menu.png" width="230" alt="AI Widgets menu in the GNOME top panel">
+  <img src="docs/screenshots/linux-desktop-widget.png" width="600" alt="AI Widgets cards on the GNOME desktop">
+</p>
 
 ## Requirements
 
@@ -33,8 +60,8 @@ The control window starts in English and creates its data file at:
 ## Install on Ubuntu GNOME
 
 AI Widgets is distributed as a Debian package for 64-bit Ubuntu. Build (or
-download) both artifacts, then install the application package with `apt` so
-that any system dependencies are resolved automatically:
+download) the package, then install it with `apt` so that any system
+dependencies are resolved automatically:
 
 ```bash
 npm run package:linux
@@ -43,26 +70,19 @@ sudo apt install ./dist/aiwidgets_*_amd64.deb
 
 Open **AI Widgets** from the application menu (or run `aiwidgets`) and connect
 the providers you want to use. The package also installs a background autostart
-entry, so usage is refreshed after you sign in.
-
-The GNOME Shell extension is packaged separately and is required for the
-desktop cards and the **AI** top-panel menu:
-
-```bash
-npm run package:gnome
-gnome-extensions install --force dist/aiwidgets-gnome-shell.zip
-gnome-extensions enable aiwidgets@fdipietro.dev
-```
-
-Verify that it is enabled with:
+entry and the GNOME Shell extension, so usage is refreshed after you sign in
+and the **AI** top-panel menu and desktop cards need no separate installation.
+After installing during an active GNOME session, log out and back in once, then
+verify the extension:
 
 ```bash
-gnome-extensions list --enabled | grep aiwidgets@fdipietro.dev
+gnome-extensions info aiwidgets@fdipietro.dev
 ```
 
-The extension supports GNOME Shell 46. To update it, run the same install
-command with `--force` and enable it again if GNOME disables it during the
-update.
+It should report the path under
+`/usr/share/gnome-shell/extensions/aiwidgets@fdipietro.dev`, `Enabled: Yes`,
+and `State: ACTIVE`. Existing per-user ZIP installations can be migrated from
+the app with **Use bundled version**.
 
 ## Connect subscriptions
 

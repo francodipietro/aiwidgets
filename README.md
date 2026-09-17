@@ -166,6 +166,14 @@ provider sessions. This keeps relative Claude resets and all usage figures
 current without a visible browser or a second sign-in. Use `--no-refresh` only
 when intentionally reading the saved snapshot.
 
+<p align="center">
+  <img src="docs/screenshots/linux-cli.png" width="680" alt="AI Widgets usage CLI showing provider quotas and DeepSeek API balance"><br><br>
+  <strong>Terminal snapshot</strong><br>
+  Read every enabled provider in a script-friendly terminal view: percentages,
+  progress bars, reset timing, Copilot allowance details, and DeepSeek's used
+  and available balance.
+</p>
+
 ```bash
 # From a development checkout (also works when the background app is stopped)
 npm run usage

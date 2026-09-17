@@ -11,6 +11,7 @@ las imágenes finales en esta carpeta como `macos-app.png`,
 Las capturas GNOME incluidas se nombran:
 
 - `linux-app.png` — ventana de control.
+- `linux-cli.png` — salida de la CLI con cuotas y saldo DeepSeek.
 - `linux-history.png` — historial local.
 - `linux-desktop-widget.png` — tarjetas ancladas al escritorio.
 - `linux-panel-menu.png` — menú de la barra superior.

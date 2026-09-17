@@ -38,15 +38,22 @@ if [ -e "/opt/aiwidgets/chrome-sandbox" ]; then
   chown root:root "/opt/aiwidgets/chrome-sandbox"
   chmod 4755 "/opt/aiwidgets/chrome-sandbox"
 fi
-update-alternatives --install /usr/bin/aiwidgets aiwidgets /opt/aiwidgets/aiwidgets 100
+update-alternatives --install /usr/bin/aiwidgets aiwidgets /opt/aiwidgets/aiwidgets-launcher 100
 `;
 const postrm = `#!/bin/sh
 set -e
 case "$1" in
   remove|purge|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
-    update-alternatives --remove aiwidgets /opt/aiwidgets/aiwidgets || true
+    update-alternatives --remove aiwidgets /opt/aiwidgets/aiwidgets-launcher || true
     ;;
 esac
+`;
+const launcher = `#!/bin/sh
+# Electron's development-only Node mode can be inherited by shells and makes a
+# packaged app treat its first argument as a JavaScript file. The public CLI
+# must always start the packaged Electron application instead.
+unset ELECTRON_RUN_AS_NODE
+exec /opt/aiwidgets/aiwidgets "$@"
 `;
 const desktop = `[Desktop Entry]
 Type=Application
@@ -82,12 +89,14 @@ try {
     writeFile(path.join(stage, 'DEBIAN', 'control'), control),
     writeFile(path.join(stage, 'DEBIAN', 'postinst'), postinst),
     writeFile(path.join(stage, 'DEBIAN', 'postrm'), postrm),
+    writeFile(path.join(stage, 'opt', 'aiwidgets', 'aiwidgets-launcher'), launcher),
     writeFile(path.join(stage, 'usr', 'share', 'applications', 'aiwidgets.desktop'), desktop),
     writeFile(path.join(stage, 'etc', 'xdg', 'autostart', 'aiwidgets.desktop'), autostart),
   ]);
   await Promise.all([
     chmod(path.join(stage, 'DEBIAN', 'postinst'), 0o755),
     chmod(path.join(stage, 'DEBIAN', 'postrm'), 0o755),
+    chmod(path.join(stage, 'opt', 'aiwidgets', 'aiwidgets-launcher'), 0o755),
   ]);
   await run('dpkg-deb', ['--build', '--root-owner-group', '-Zgzip', '-z1', stage, output]);
 } finally {

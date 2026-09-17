@@ -2,6 +2,7 @@ import electron from 'electron';
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runUsageCli } from './usage-cli.mjs';
@@ -58,6 +59,7 @@ const DEFAULT_DESKTOP_LAYOUT = {
 const PROVIDER_IDS = ['claude', 'codex', 'copilot', 'deepseek'];
 const PAGE_PROVIDER_IDS = ['claude', 'codex', 'copilot'];
 const API_PROVIDER_IDS = ['deepseek'];
+const GNOME_EXTENSION_UUID = 'aiwidgets@fdipietro.dev';
 const MAC_WIDGET_SPACING = 20;
 const MAC_WIDGET_MARGIN = 28;
 const MAC_WIDGET_HEIGHT = 286;
@@ -147,6 +149,31 @@ function deepSeekCredentialsPath() { return path.join(app.getPath('userData'), D
 function enabledProviderIds(data) {
   const configured = data?.settings?.enabledProviders;
   return Array.isArray(configured) ? configured.filter((id) => PROVIDER_IDS.includes(id)) : DEFAULT_DATA.settings.enabledProviders;
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve, reject) => execFile(command, args, { timeout: 5_000 }, (error, stdout, stderr) => {
+    if (error) reject(Object.assign(error, { stderr }));
+    else resolve(stdout);
+  }));
+}
+
+async function gnomeIntegrationState() {
+  if (process.platform !== 'linux') return { supported: false, installed: false, enabled: false };
+  try {
+    const info = await runCommand('gnome-extensions', ['info', GNOME_EXTENSION_UUID]);
+    return { supported: true, installed: true, enabled: /^Enabled:\s+Yes$/mi.test(info), active: /^State:\s+ACTIVE$/mi.test(info) };
+  } catch {
+    return { supported: true, installed: false, enabled: false, active: false };
+  }
+}
+
+async function enableGnomeIntegration() {
+  if (process.platform !== 'linux') throw new Error('GNOME desktop integration is only available on Linux.');
+  const state = await gnomeIntegrationState();
+  if (!state.installed) throw new Error('The bundled GNOME extension is not installed. Reinstall AI Widgets.');
+  await runCommand('gnome-extensions', ['enable', GNOME_EXTENSION_UUID]);
+  return gnomeIntegrationState();
 }
 
 function normaliseDesktopLayout(input) {
@@ -307,7 +334,7 @@ async function readUiState() {
   let history;
   try { history = await readHistory(); }
   catch (error) { history = { ...normaliseHistory({}), error: error.message }; }
-  return { ...(await readData()), collector: await readCollector(), alertState: await readAlertState(), history };
+  return { ...(await readData()), collector: await readCollector(), alertState: await readAlertState(), history, desktopIntegration: await gnomeIntegrationState() };
 }
 
 async function refreshNativeWidgets() {
@@ -1386,6 +1413,8 @@ ipcMain.on('window:resize-control', (_event, height) => resizeControlWindow(heig
 ipcMain.handle('window:minimize', () => windowRef?.minimize());
 ipcMain.handle('window:close', () => windowRef?.hide());
 ipcMain.handle('desktop-widget:state', desktopWidgetState);
+ipcMain.handle('desktop-integration:state', gnomeIntegrationState);
+ipcMain.handle('desktop-integration:enable', enableGnomeIntegration);
 ipcMain.handle('desktop-widget:refresh', async () => { await refreshAllProviders(); return desktopWidgetState(); });
 ipcMain.handle('desktop-widget:toggle-visible', () => setDesktopLayout({ desktopVisible: !desktopLayout.desktopVisible }));
 ipcMain.handle('desktop-widget:set-editing', (_event, editing) => setDesktopLayout({ editing: Boolean(editing), desktopVisible: true }));

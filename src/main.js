@@ -64,14 +64,16 @@ const GNOME_USER_EXTENSION_DIRECTORY = path.join('.local', 'share', 'gnome-shell
 const GNOME_SYSTEM_EXTENSION_DIRECTORY = path.join('/usr', 'share', 'gnome-shell', 'extensions', GNOME_EXTENSION_UUID);
 const MAC_WIDGET_SPACING = 20;
 const MAC_WIDGET_MARGIN = 28;
-const MAC_WIDGET_HEIGHT = 286;
+const MAC_WIDGET_HEIGHT = 320;
 const MAC_PANEL_WIDTH = 318;
 const MAC_PANEL_MAX_WIDTH = 1200;
+const MAC_PANEL_INITIAL_HEIGHT = 280;
 
 let windowRef;
 let desktopWidgetRef;
 let trayPopoverRef;
 let trayRef;
+let trayPopoverDisplayId;
 let desktopLayout = { ...DEFAULT_DESKTOP_LAYOUT };
 let desktopWidgetData = DEFAULT_DATA;
 let layoutSaveTimer;
@@ -445,7 +447,7 @@ function trayPopoverBounds(preferredHeight, preferredWidth) {
   const { workArea } = display;
   const maxHeight = Math.max(1, workArea.height - 24);
   const maxWidth = Math.max(1, Math.min(MAC_PANEL_MAX_WIDTH, workArea.width - 16));
-  const initialHeight = Math.min(720, maxHeight);
+  const initialHeight = Math.min(MAC_PANEL_INITIAL_HEIGHT, maxHeight);
   const currentHeight = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().height : initialHeight;
   const currentWidth = trayPopoverRef && !trayPopoverRef.isDestroyed() ? trayPopoverRef.getBounds().width : MAC_PANEL_WIDTH;
   const requestedHeight = Number.isFinite(preferredHeight) ? preferredHeight : currentHeight;
@@ -462,12 +464,14 @@ function trayPopoverBounds(preferredHeight, preferredWidth) {
   };
 }
 
-function resizeTrayPopover(contentHeight, contentWidth) {
-  if (!trayPopoverRef || trayPopoverRef.isDestroyed() || !Number.isFinite(contentHeight)) return;
-  const bounds = trayPopoverBounds(contentHeight, contentWidth);
+function resizeTrayPopover(contentHeight, contentWidth, preserveCurrentHeight = false) {
+  if (!trayPopoverRef || trayPopoverRef.isDestroyed() || !Number.isFinite(contentHeight)) return null;
   const current = trayPopoverRef.getBounds();
-  if (current.x === bounds.x && current.y === bounds.y && current.width === bounds.width && current.height === bounds.height) return;
+  const requestedHeight = preserveCurrentHeight ? Math.max(contentHeight, current.height) : contentHeight;
+  const bounds = trayPopoverBounds(requestedHeight, contentWidth);
+  if (current.x === bounds.x && current.y === bounds.y && current.width === bounds.width && current.height === bounds.height) return bounds;
   trayPopoverRef.setBounds(bounds);
+  return bounds;
 }
 
 function createTrayPopover() {
@@ -490,18 +494,48 @@ async function toggleTrayPopover() {
   const popup = createTrayPopover();
   if (popup.isVisible()) { popup.hide(); return; }
   const state = await desktopWidgetState();
+  notifyTrayDisplayChanged();
   popup.setBounds(trayPopoverBounds(popup.getBounds().height));
   popup.show();
   popup.focus();
   popup.webContents.send('desktop-widget:state', state);
+  popup.webContents.send('desktop-widget:opened');
 }
 
-function createMenuBarItem() {
+function trayDisplayId() {
+  const trayBounds = trayRef?.getBounds();
+  const point = trayBounds ? { x: trayBounds.x, y: trayBounds.y } : screen.getCursorScreenPoint();
+  return screen.getDisplayNearestPoint(point).id;
+}
+
+function notifyTrayDisplayChanged() {
+  const displayId = trayDisplayId();
+  if (displayId === trayPopoverDisplayId) return;
+  trayPopoverDisplayId = displayId;
+  if (trayPopoverRef && !trayPopoverRef.isDestroyed()) {
+    trayPopoverRef.webContents.send('desktop-widget:display-changed');
+  }
+}
+
+async function createMenuBarItem() {
   if (!isMacDesktopIntegration() || trayRef) return;
-  const icon = nativeImage.createFromPath(path.join(import.meta.dirname, '..', 'imgs', 'menu-bar-iconTemplate.svg')).resize({ width: 18, height: 18 });
+  // Read the bitmap through Node first: nativeImage.createFromPath cannot
+  // reliably resolve files inside the packaged app.asar on macOS.
+  const iconPath = path.join(import.meta.dirname, '..', 'imgs', 'menu-bar-iconTemplate.png');
+  const retinaIconPath = path.join(import.meta.dirname, '..', 'imgs', 'menu-bar-iconTemplate@2x.png');
+  const icon = nativeImage.createFromBuffer(await readFile(iconPath));
+  const retinaIcon = nativeImage.createFromBuffer(await readFile(retinaIconPath));
+  const retinaSize = retinaIcon.getSize();
+  icon.addRepresentation({
+    scaleFactor: 2,
+    buffer: retinaIcon.toBitmap(),
+    width: retinaSize.width,
+    height: retinaSize.height,
+  });
   icon.setTemplateImage(true);
   trayRef = new Tray(icon);
-  trayRef.setTitle('AI');
+  // Keep the status item compact so it remains visible beside the notch.
+  // The tooltip still provides the accessible name on hover.
   trayRef.setToolTip('AI Widgets');
   trayRef.on('click', () => { toggleTrayPopover().catch(() => {}); });
 }
@@ -509,7 +543,7 @@ function createMenuBarItem() {
 async function initialiseMacDesktopIntegration() {
   if (!isMacDesktopIntegration()) return;
   await loadDesktopLayout();
-  createMenuBarItem();
+  await createMenuBarItem();
   createDesktopWidget();
   await refreshNativeWidgets();
 }
@@ -1393,6 +1427,18 @@ app.whenReady().then(async () => {
   await ensureDataFile(); await readCollector(); await setRuntimeActive(true); await setRuntimeHeartbeat();
   await ensureCliRefreshDirectories();
   await pruneCliRefreshResponses();
+  screen.on('display-metrics-changed', () => {
+    trayPopoverDisplayId = undefined;
+    if (trayPopoverRef && !trayPopoverRef.isDestroyed() && trayPopoverRef.isVisible()) notifyTrayDisplayChanged();
+  });
+  screen.on('display-added', () => {
+    trayPopoverDisplayId = undefined;
+    if (trayPopoverRef && !trayPopoverRef.isDestroyed() && trayPopoverRef.isVisible()) notifyTrayDisplayChanged();
+  });
+  screen.on('display-removed', () => {
+    trayPopoverDisplayId = undefined;
+    if (trayPopoverRef && !trayPopoverRef.isDestroyed() && trayPopoverRef.isVisible()) notifyTrayDisplayChanged();
+  });
   await initialiseMacDesktopIntegration();
   if (automaticRefreshEnabled) {
     refreshAllProviders().catch(() => {});
@@ -1452,10 +1498,11 @@ ipcMain.handle('desktop-widget:toggle-visible', () => setDesktopLayout({ desktop
 ipcMain.handle('desktop-widget:set-editing', (_event, editing) => setDesktopLayout({ editing: Boolean(editing), desktopVisible: true }));
 ipcMain.handle('desktop-widget:anchor', () => setDesktopLayout({ autoPosition: true, x: null, y: null }));
 ipcMain.handle('desktop-widget:resize', (_event, delta) => adjustDesktopWidgetWidth(delta));
-ipcMain.on('desktop-widget:resize-panel', (_event, size) => {
+ipcMain.handle('desktop-widget:resize-panel', (_event, size) => {
   const height = typeof size === 'object' ? size?.height : size;
   const width = typeof size === 'object' ? size?.width : undefined;
-  resizeTrayPopover(height, width);
+  const preserveCurrentHeight = typeof size === 'object' && size?.preserveCurrentHeight === true;
+  return resizeTrayPopover(height, width, preserveCurrentHeight);
 });
 ipcMain.handle('desktop-widget:set-panel-layout', (_event, panelLayout) => setDesktopLayout({ panelLayout }));
 ipcMain.handle('desktop-widget:open-settings', () => { trayPopoverRef?.hide(); showControlCenter(); });

@@ -202,3 +202,19 @@ npm run package:mac
 ```
 
 `dist/` and `node_modules/` are generated locally and ignored by Git. macOS packaging includes the Electron control window, menu-bar integration, and desktop cards. The GNOME extension is Ubuntu-specific and is not included on macOS.
+
+The macOS DMG and ZIP are currently unsigned local test artifacts. Public
+direct installation still requires Developer ID signing, hardened runtime,
+notarization, and a release channel.
+
+## Contributing and license
+
+AI Widgets is open-source software distributed under the [GNU General Public
+License v3](LICENSE). The project is an Electron application, not an npm
+library; `private: true` in `package.json` only prevents accidental `npm
+publish` and does not make the GitHub repository private.
+
+Before opening a pull request, run `npm test` and `npm run check`. Do not
+include provider cookies, API keys, personal usage data, or other credentials
+in issues, screenshots, fixtures, or commits. See [CONTRIBUTING.md](CONTRIBUTING.md)
+and [SECURITY.md](SECURITY.md) for the project guidelines.

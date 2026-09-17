@@ -2,8 +2,20 @@
   "name": "aiwidgets",
   "version": "0.4.20",
   "description": "Local subscription-usage widgets for Claude, Codex, and GitHub Copilot",
+  "license": "GPL-3.0-only",
   "private": true,
   "author": "AI Widgets",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/francodipietro/aiwidgets.git"
+  },
+  "bugs": {
+    "url": "https://github.com/francodipietro/aiwidgets/issues"
+  },
+  "homepage": "https://github.com/francodipietro/aiwidgets",
+  "engines": {
+    "node": ">=20"
+  },
   "desktopName": "aiwidgets",
   "main": "src/main.js",
   "type": "module",
@@ -38,6 +50,7 @@
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "imgs/logo_app.svg",
+      "artifactName": "AI-Widgets-${version}-${arch}-${os}.${ext}",
       "target": ["dmg", "zip"]
     }
   },

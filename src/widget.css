@@ -5,7 +5,7 @@ body { margin: 0; overflow: hidden; background: transparent; color: #f8f7f6; use
 button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .desktop-root { display: flex; gap: 20px; align-items: flex-start; }
 .widget-card { width: var(--card-width); min-height: 258px; padding: 11px; border: 1px solid rgba(255,255,255,.17); border-radius: 14px; background: rgba(18,37,62,.92); box-shadow: 0 14px 34px rgba(0,0,0,.34); }
-.desktop-root .widget-card { height: 258px; overflow: hidden; }
+.desktop-root .widget-card { min-height: 258px; height: auto; overflow: visible; }
 .widget-empty { width: var(--card-width, 100%); min-height: 96px; padding: 18px 14px; border: 1px solid rgba(255,255,255,.17); border-radius: 14px; background: rgba(18,37,62,.92); color: #d6dce8; font-size: 12px; line-height: 1.4; }
 .desktop-root .widget-empty { min-height: 258px; }
 .widget-card.claude { background: rgba(47,31,28,.92); }
@@ -38,11 +38,18 @@ button { border: 0; color: inherit; cursor: pointer; font: inherit; }
 .desktop-edit-hint { margin: 7px 8px 0; color: #c9ddff; font-size: 9px; text-align: center; }
 body.editing .desktop-root, body.editing .desktop-root * { -webkit-app-region: drag; }
 .panel-root { min-height: 0; overflow: hidden; padding: 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 14px; background: rgba(18,24,35,.94); box-shadow: 0 12px 30px rgba(0,0,0,.3); }
-.panel-heading { margin: 3px 6px 9px; color: #fff; font-size: 14px; font-weight: 750; }
-.panel-layout { float: right; color: #aeb8c8; font-size: 10px; font-weight: 500; }
-.panel-layout select { margin-left: 3px; border: 0; border-radius: 5px; background: rgba(255,255,255,.12); color: #fff; font: inherit; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; margin: 3px 6px 9px; color: #fff; font-size: 14px; font-weight: 750; }
+.panel-layout-menu { display: flex; align-items: center; gap: 3px; color: #aeb8c8; font-size: 10px; font-weight: 500; }
+.panel-layout-menu details { position: relative; }
+.panel-layout-menu summary { padding: 3px 6px; border-radius: 5px; background: rgba(255,255,255,.12); color: #fff; cursor: pointer; list-style: none; }
+.panel-layout-menu summary::-webkit-details-marker { display: none; }
+.panel-layout-menu summary::after { margin-left: 5px; content: '▾'; color: #c9ddff; }
+.panel-layout-options { position: absolute; z-index: 2; top: calc(100% + 3px); right: 0; min-width: 82px; padding: 3px; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(24,31,45,.98); box-shadow: 0 8px 18px rgba(0,0,0,.35); }
+.panel-layout-options button { display: block; width: 100%; padding: 5px 6px; border-radius: 4px; background: transparent; color: #eef3fb; font-size: 10px; text-align: left; }
+.panel-layout-options button:hover { background: rgba(255,255,255,.14); }
 .panel-cards { display: grid; grid-template-columns: 1fr; gap: 0; }
 .panel-cards.two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 8px; }
+.panel-cards.two-columns .panel-card.deepseek { grid-column: 1 / -1; }
 .panel-cards.row { grid-template-columns: repeat(var(--provider-count, 4), minmax(0, 1fr)); column-gap: 8px; }
 .panel-card { width: 100%; min-height: 0; margin: 7px 0; padding: 12px 14px; border: 0; border-radius: 12px; background: rgba(18,37,62,.96); }
 .panel-card .quota-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

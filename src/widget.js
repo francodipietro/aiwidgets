@@ -5,6 +5,7 @@ const surface = new URLSearchParams(location.search).get('surface') || 'desktop'
 let state;
 let panelFitFrame = 0;
 let panelFitRevision = 0;
+let panelNeedsInitialFit = true;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#039;', '"': '&quot;' }[char]));
 const providerLogo = (id) => id === 'claude' ? '../imgs/logo_claude.svg' : id === 'copilot' ? '../imgs/logo_copilot.png' : id === 'deepseek' ? '../imgs/logo_deepseek.svg' : '../imgs/logo_chatgpt.svg';
@@ -59,7 +60,7 @@ function card(provider, id, panel) {
   return `<article class="widget-card ${panel ? 'panel-card' : ''} ${id}"><header class="widget-header"><h2>${escapeHtml(name)}</h2><img class="widget-logo ${id}" src="${providerLogo(id)}" alt="" /></header><div class="quota-list">${blocks}</div>${note}</article>`;
 }
 
-function fitPanelToDisplay() {
+async function fitPanelToDisplay({ preserveCurrentHeight = false } = {}) {
   if (surface !== 'panel') return;
   const revision = ++panelFitRevision;
   if (panelFitFrame) cancelAnimationFrame(panelFitFrame);
@@ -68,36 +69,47 @@ function fitPanelToDisplay() {
   root.style.removeProperty('--panel-unscaled-width');
 
   const isCurrent = () => revision === panelFitRevision;
-  const resizeToContent = () => {
+  const resizeToContent = async () => {
     if (!isCurrent()) return;
-    const contentHeight = root.scrollHeight;
-    const availableHeight = window.innerHeight;
-    if (contentHeight <= availableHeight) {
-      window.desktopWidgets.resizePanel({ height: Math.ceil(contentHeight), width: panelWidth() });
-      return;
+    let contentHeight = root.scrollHeight;
+    // The main process returns the clamped native height. Use that result to
+    // decide whether the display is actually too short. This sizing pass is
+    // intentionally only called at launch or after a display change.
+    const resizeRequest = () => ({ height: Math.ceil(contentHeight), width: panelWidth(), preserveCurrentHeight });
+    let appliedBounds = await window.desktopWidgets.resizePanel(resizeRequest());
+    if (!isCurrent()) return;
+    let availableHeight = Number.isFinite(appliedBounds?.height) ? appliedBounds.height : window.innerHeight;
+
+    // If the currently open content does not fit the display, compact the
+    // panel before resorting to a transform scale.
+    if (contentHeight > availableHeight) {
+      root.classList.add('panel-compact');
+      contentHeight = root.scrollHeight;
+      appliedBounds = await window.desktopWidgets.resizePanel(resizeRequest());
+      if (!isCurrent()) return;
+      availableHeight = Number.isFinite(appliedBounds?.height) ? appliedBounds.height : window.innerHeight;
     }
+    if (contentHeight > availableHeight) {
+      root.classList.add('panel-condensed');
+      contentHeight = root.scrollHeight;
+      appliedBounds = await window.desktopWidgets.resizePanel(resizeRequest());
+      if (!isCurrent()) return;
+      availableHeight = Number.isFinite(appliedBounds?.height) ? appliedBounds.height : window.innerHeight;
+    }
+    if (contentHeight <= availableHeight) return;
 
     const scale = availableHeight / contentHeight;
     root.style.setProperty('--panel-scale', scale.toFixed(4));
     root.style.setProperty('--panel-unscaled-width', `${100 / scale}%`);
     panelFitFrame = requestAnimationFrame(() => {
       if (!isCurrent()) return;
-      window.desktopWidgets.resizePanel({ height: Math.min(availableHeight, Math.ceil(root.scrollHeight * scale)), width: panelWidth() });
+      window.desktopWidgets.resizePanel({ height: Math.min(availableHeight, Math.ceil(root.scrollHeight * scale)), width: panelWidth(), preserveCurrentHeight });
     });
   };
 
   panelFitFrame = requestAnimationFrame(() => {
     if (!isCurrent()) return;
-    if (root.scrollHeight <= window.innerHeight) {
-      resizeToContent();
-      return;
-    }
-    root.classList.add('panel-compact');
-    panelFitFrame = requestAnimationFrame(() => {
-      if (!isCurrent()) return;
-      if (root.scrollHeight > window.innerHeight) root.classList.add('panel-condensed');
-      resizeToContent();
-    });
+    resizeToContent();
   });
 }
 
@@ -125,9 +137,16 @@ function render() {
   const editLabel = state.layout?.editing ? 'Pin cards to desktop' : 'Edit position and size';
   const visibilityLabel = state.layout?.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards';
   const layout = panelLayout();
+  const layoutLabel = layout === 'two-columns' ? '2 columns' : layout === 'row' ? '1 row' : '1 column';
   const providerCount = Math.max(1, ids.filter((id) => ['claude', 'codex', 'copilot', 'deepseek'].includes(id)).length);
-  root.innerHTML = `<section class="panel-root"><div class="panel-heading">AI Widgets · usage <label class="panel-layout">Layout <select data-action="panel-layout"><option value="one-column"${layout === 'one-column' ? ' selected' : ''}>1 column</option><option value="two-columns"${layout === 'two-columns' ? ' selected' : ''}>2 columns</option><option value="row"${layout === 'row' ? ' selected' : ''}>1 row</option></select></label></div><div class="panel-cards ${layout}" style="--provider-count:${providerCount}">${content}</div><div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="settings">Open settings</button><details><summary>Desktop cards</summary><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button></details><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
-  fitPanelToDisplay();
+  root.innerHTML = `<section class="panel-root"><div class="panel-heading"><span>AI Widgets · usage</span><div class="panel-layout-menu"><span>Layout</span><details><summary>${layoutLabel}</summary><div class="panel-layout-options" role="menu"><button type="button" data-action="panel-layout" data-layout="one-column" role="menuitem">1 column</button><button type="button" data-action="panel-layout" data-layout="two-columns" role="menuitem">2 columns</button><button type="button" data-action="panel-layout" data-layout="row" role="menuitem">1 row</button></div></details></div></div><div class="panel-cards ${layout}" style="--provider-count:${providerCount}">${content}</div><div class="panel-actions"><button data-action="refresh">Update now</button><button data-action="settings">Open settings</button><details><summary>Desktop cards</summary><button data-action="toggle-visible">${visibilityLabel}</button><button data-action="edit">${editLabel}</button><button data-action="anchor">Anchor at top right</button></details><button class="danger" data-action="exit">Exit AI Widgets</button></div></section>`;
+  root.querySelector('.panel-actions details')?.addEventListener('toggle', (event) => {
+    fitPanelToDisplay({ preserveCurrentHeight: event.target.open });
+  });
+  if (panelNeedsInitialFit) {
+    panelNeedsInitialFit = false;
+    fitPanelToDisplay();
+  }
 }
 
 function renderError(error) {
@@ -142,6 +161,11 @@ root.addEventListener('click', async (event) => {
   try {
     if (action === 'refresh') {
       state = await window.desktopWidgets.refresh();
+    } else if (action === 'panel-layout') {
+      const selectedLayout = event.target.closest('[data-layout]')?.dataset.layout;
+      if (!selectedLayout) return;
+      await window.desktopWidgets.setPanelLayout(selectedLayout);
+      state = await window.desktopWidgets.state();
     } else if (action === 'toggle-visible') {
       await window.desktopWidgets.toggleVisible();
       state = await window.desktopWidgets.state();
@@ -159,18 +183,9 @@ root.addEventListener('click', async (event) => {
       return;
     }
     render();
+    if (surface === 'panel' && action === 'panel-layout') fitPanelToDisplay({ preserveCurrentHeight: true });
   } catch (error) {
     renderError(error);
-  }
-});
-
-root.addEventListener('change', async (event) => {
-  if (event.target.closest('[data-action="panel-layout"]')) {
-    try {
-      await window.desktopWidgets.setPanelLayout(event.target.value);
-      state = await window.desktopWidgets.state();
-      render();
-    } catch (error) { renderError(error); }
   }
 });
 
@@ -186,7 +201,11 @@ window.addEventListener('wheel', async (event) => {
   }
 }, { passive: false });
 
-window.addEventListener('resize', fitPanelToDisplay);
-
 window.desktopWidgets.onState((nextState) => { state = nextState; render(); });
+window.desktopWidgets.onDisplayChanged(() => { fitPanelToDisplay(); });
+window.desktopWidgets.onOpened(() => {
+  const desktopDetails = root.querySelector('.panel-actions details');
+  if (desktopDetails?.open) desktopDetails.open = false;
+  fitPanelToDisplay();
+});
 window.desktopWidgets.state().then((nextState) => { state = nextState; render(); }).catch(renderError);

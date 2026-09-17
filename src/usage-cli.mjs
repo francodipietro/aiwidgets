@@ -8,11 +8,13 @@ const providerNames = {
   claude: 'Claude',
   codex: 'Codex',
   copilot: 'GitHub Copilot',
+  deepseek: 'DeepSeek API',
 };
 const palettes = {
   claude: { foreground: [242, 174, 147], background: [58, 39, 32] },
   codex: { foreground: [201, 221, 255], background: [18, 26, 42] },
   copilot: { foreground: [184, 192, 204], background: [35, 39, 47] },
+  deepseek: { foreground: [92, 198, 237], background: [9, 35, 82] },
 };
 const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 const REFRESH_DIRECTORY = 'usage-refresh';
@@ -98,6 +100,14 @@ function currency(value) {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
 
+function money(value, currencyCode) {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
+  } catch {
+    return `${currencyCode} ${currency(value)}`;
+  }
+}
+
 function ansi(text, code) {
   return useColor ? `\u001B[${code}m${text}\u001B[0m` : text;
 }
@@ -128,6 +138,22 @@ function usageLines(title, usage, palette) {
   ];
 }
 
+function balanceLines(balance, palette) {
+  const available = Number(balance?.totalBalance);
+  const funded = Number(balance?.included);
+  const used = Number(balance?.used);
+  const currencyCode = String(balance?.currency || 'USD').toUpperCase();
+  if (!Number.isFinite(available)) return ['  API balance        no data'];
+  if (![funded, used].every(Number.isFinite) || funded <= 0) {
+    return [`  API balance        ${money(available, currencyCode)} available · no funded balance yet`];
+  }
+  const consumed = Math.max(0, Math.min(100, used / funded * 100));
+  return [
+    `  API balance        ${foreground(`${number(consumed)}% used`, palette)} · ${money(available, currencyCode)} available`,
+    `  ${progressBar(consumed, palette)} ${money(used, currencyCode)} used of ${money(funded, currencyCode)}`,
+  ];
+}
+
 function providerLines(provider, palette) {
   if (provider.id === 'copilot') {
     return [
@@ -138,6 +164,7 @@ function providerLines(provider, palette) {
         : []),
     ];
   }
+  if (provider.id === 'deepseek') return balanceLines(provider.balance, palette);
   return [...usageLines('Session', provider.session, palette), ...usageLines('Weekly', provider.weekly, palette)];
 }
 

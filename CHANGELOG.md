@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Keep the GNOME top-panel menu sharp and its submenus clickable on shorter or
+  lower-resolution displays by scrolling only the card area instead of scaling
+  the complete menu actor.
+- Refit the card viewport when Card layout or Desktop cards is expanded and
+  calculate the available area from the monitor that contains the panel item.
+
 ## 0.4.20 — 2026-09-17
 
 - Fix the macOS menu-bar icon in packaged DMG/ZIP builds by loading PNG

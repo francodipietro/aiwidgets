@@ -55,3 +55,17 @@ test('the macOS tray panel keeps layout and desktop-card controls visible', asyn
   assert.match(mainSource, /const MAC_WIDGET_HEIGHT = 320;/);
   assert.match(mainSource, /const MAC_PANEL_INITIAL_HEIGHT = 280;/);
 });
+
+test('the GNOME panel stays sharp and keeps submenus interactive on short displays', async () => {
+  const extensionSource = await readFile(path.join(root, 'gnome-extension', 'aiwidgets@fdipietro.dev', 'extension.js'), 'utf8');
+  const extensionCss = await readFile(path.join(root, 'gnome-extension', 'aiwidgets@fdipietro.dev', 'stylesheet.css'), 'utf8');
+
+  assert.match(extensionSource, /new St\.ScrollView\(\{/);
+  assert.match(extensionSource, /enable_mouse_scrolling: true/);
+  assert.match(extensionSource, /vscrollbar_policy = St\.PolicyType\.AUTOMATIC/);
+  assert.match(extensionSource, /open-state-changed[^\n]+_refitAfterSubmenuTransition/);
+  assert.match(extensionSource, /GLib\.timeout_add\(GLib\.PRIORITY_DEFAULT, 300/);
+  assert.match(extensionSource, /findIndexForActor\(this\._panelButton\)/);
+  assert.doesNotMatch(extensionSource, /menu\.actor\.set_scale/);
+  assert.match(extensionCss, /\.aiwidgets-panel-cards-viewport\s*\{[^}]*padding: 0;/s);
+});

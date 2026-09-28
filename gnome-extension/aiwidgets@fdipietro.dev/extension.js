@@ -117,6 +117,9 @@ export default class AIWidgetsDesktopExtension extends Extension {
     this._runtimeFile = Gio.File.new_for_path(RUNTIME_PATH);
     this._runtimeActive = true;
     this._panelMode = 'full';
+    this._panelFitId = 0;
+    this._panelFitTimeoutId = 0;
+    this._panelFitAllowDense = false;
     this._layout = { ...DEFAULT_LAYOUT };
     this._widget = new St.BoxLayout({
       vertical: false,
@@ -175,6 +178,8 @@ export default class AIWidgetsDesktopExtension extends Extension {
 
   disable() {
     if (this._timerId) GLib.source_remove(this._timerId);
+    if (this._panelFitId) GLib.source_remove(this._panelFitId);
+    if (this._panelFitTimeoutId) GLib.source_remove(this._panelFitTimeoutId);
     if (this._monitorChangedFileId) this._monitor?.disconnect(this._monitorChangedFileId);
     this._monitor?.cancel();
     if (this._runtimeChangedId) this._runtimeMonitor?.disconnect(this._runtimeChangedId);
@@ -187,9 +192,10 @@ export default class AIWidgetsDesktopExtension extends Extension {
     if (this._scrollId) this._widget?.disconnect(this._scrollId);
     this._panelButton?.destroy();
     this._widget?.destroy();
-    this._timerId = this._monitorChangedFileId = this._runtimeChangedId = this._monitorChangedId = this._windowCreatedId = 0;
+    this._timerId = this._panelFitId = this._panelFitTimeoutId = this._monitorChangedFileId = this._runtimeChangedId = this._monitorChangedId = this._windowCreatedId = 0;
     this._dragBeginId = this._dragMotionId = this._dragEndId = this._scrollId = 0;
     this._monitor = this._runtimeMonitor = this._runtimeFile = this._widget = this._layoutFile = this._panelButton = null;
+    this._panelCardsScroll = this._panelCardsBox = null;
     this._dragging = false;
   }
 
@@ -287,34 +293,54 @@ export default class AIWidgetsDesktopExtension extends Extension {
 
   _renderPanel(data) {
     if (!this._panelButton || this._runtimeActive === false) return;
+    if (this._panelFitId) {
+      GLib.source_remove(this._panelFitId);
+      this._panelFitId = 0;
+    }
+    if (this._panelFitTimeoutId) {
+      GLib.source_remove(this._panelFitTimeoutId);
+      this._panelFitTimeoutId = 0;
+    }
+    this._panelFitAllowDense = false;
     this._panelButton.menu.removeAll();
-    this._panelButton.menu.actor.set_scale(1, 1);
-    this._panelButton.menu.actor.set_pivot_point(0, 0);
     const heading = new PopupMenu.PopupMenuItem('AI Widgets · usage', { reactive: false, can_focus: false });
     heading.label.style = 'font-weight: bold;';
     this._panelButton.menu.addMenuItem(heading);
 
     const providers = new Map((data.providers || []).map(provider => [provider.id, provider]));
     const providerIds = enabledProviderIds(data);
-    const monitor = Main.layoutManager.primaryMonitor;
+    const workArea = this._panelWorkArea();
     // Keep the detailed cards by default. Compacting is a fallback after the
     // menu has been measured against this monitor's usable height.
     this._panelCompact = this._panelMode === 'dense';
     const panelLayout = normalisePanelLayout(this._layout);
     const cardsPerRow = panelLayout === 'row' ? Math.max(1, providerIds.length) : panelLayout === 'two-columns' ? 2 : 1;
-    this._panelCardWidth = Math.max(150, Math.min(270, Math.floor((monitor.width - 64) / cardsPerRow)));
+    this._panelCardWidth = Math.max(150, Math.min(270, Math.floor((workArea.width - 64) / cardsPerRow)));
+    const cardsItem = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false, style_class: 'aiwidgets-panel-cards-viewport' });
+    this._panelCardsBox = new St.BoxLayout({ vertical: true, x_expand: true, style_class: 'aiwidgets-panel-cards-box' });
+    this._panelCardsScroll = new St.ScrollView({
+      child: this._panelCardsBox,
+      enable_mouse_scrolling: true,
+      hscrollbar_policy: St.PolicyType.NEVER,
+      overlay_scrollbars: true,
+      vscrollbar_policy: St.PolicyType.NEVER,
+      x_expand: true,
+      style_class: 'aiwidgets-panel-cards-scroll',
+    });
+    cardsItem.add_child(this._panelCardsScroll);
     for (let index = 0; index < providerIds.length; index += cardsPerRow) {
       const ids = providerIds.slice(index, index + cardsPerRow);
       if (cardsPerRow === 1) {
-        this._panelButton.menu.addMenuItem(this._createPanelCard(providers.get(ids[0]), ids[0]));
+        this._panelCardsBox.add_child(this._createPanelCard(providers.get(ids[0]), ids[0]));
         continue;
       }
-      const row = new PopupMenu.PopupBaseMenuItem({ reactive: false, can_focus: false, style_class: 'aiwidgets-panel-row' });
+      const row = new St.BoxLayout({ style_class: 'aiwidgets-panel-row' });
       const cards = new St.BoxLayout({ style_class: 'aiwidgets-panel-grid' });
       for (const id of ids) cards.add_child(this._createPanelCard(providers.get(id), id));
       row.add_child(cards);
-      this._panelButton.menu.addMenuItem(row);
+      this._panelCardsBox.add_child(row);
     }
+    this._panelButton.menu.addMenuItem(cardsItem);
     this._panelButton.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
     const layoutMenu = new PopupMenu.PopupSubMenuMenuItem(`Card layout: ${panelLayoutLabel(panelLayout)}`);
     for (const [id, label] of PANEL_LAYOUTS) {
@@ -327,6 +353,7 @@ export default class AIWidgetsDesktopExtension extends Extension {
       });
       layoutMenu.menu.addMenuItem(option);
     }
+    layoutMenu.menu.connect('open-state-changed', () => this._refitAfterSubmenuTransition());
     this._panelButton.menu.addMenuItem(layoutMenu);
     const desktopMenu = new PopupMenu.PopupSubMenuMenuItem('Desktop cards');
     const action = new PopupMenu.PopupMenuItem(this._layout.desktopVisible === false ? 'Show desktop cards' : 'Hide desktop cards');
@@ -353,6 +380,7 @@ export default class AIWidgetsDesktopExtension extends Extension {
       this._saveLayout();
     });
     desktopMenu.menu.addMenuItem(anchor);
+    desktopMenu.menu.connect('open-state-changed', () => this._refitAfterSubmenuTransition());
     this._panelButton.menu.addMenuItem(desktopMenu);
     const settings = new PopupMenu.PopupMenuItem('Open settings');
     settings.connect('activate', () => {
@@ -372,25 +400,64 @@ export default class AIWidgetsDesktopExtension extends Extension {
     const exit = new PopupMenu.PopupMenuItem('Exit AI Widgets');
     exit.connect('activate', () => this._requestExit());
     this._panelButton.menu.addMenuItem(exit);
-    const primaryIndex = global.display.get_primary_monitor();
+    this._queuePanelFit(true, data);
+  }
+
+  _panelWorkArea() {
+    let monitorIndex = Main.layoutManager.findIndexForActor(this._panelButton);
+    if (monitorIndex < 0) monitorIndex = global.display.get_primary_monitor();
     // GNOME Shell 46 exposes work areas through LayoutManager; Meta.Display
     // does not provide get_work_area_for_monitor in this runtime.
-    const workArea = Main.layoutManager.getWorkAreaForMonitor(primaryIndex);
-    const availableHeight = Math.max(1, workArea.height - (Main.panel?.height || 32) - 16);
-    GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-      const [, naturalHeight] = this._panelButton?.menu?.box?.get_preferred_height(-1) || [0, 0];
-      if (naturalHeight > availableHeight && this._panelMode === 'full') {
-        this._panelMode = 'dense';
-        this._renderPanel(data);
-      } else if (naturalHeight > 0) {
-        // Keep actual cards and bars even on short screens. The dense pass
-        // removes secondary reset details; scale only as a final fallback.
-        const scale = Math.min(1, availableHeight / naturalHeight);
-        this._panelButton?.menu?.actor?.set_scale(scale, scale);
-        this._panelButton?.menu?.actor?.set_pivot_point(0, 0);
-      }
+    return Main.layoutManager.getWorkAreaForMonitor(monitorIndex);
+  }
+
+  _queuePanelFit(allowDense = false, data = null) {
+    this._panelFitAllowDense ||= allowDense;
+    if (this._panelFitId) return;
+    this._panelFitId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      this._panelFitId = 0;
+      const shouldTryDense = this._panelFitAllowDense;
+      this._panelFitAllowDense = false;
+      this._fitPanelToWorkArea(shouldTryDense, data);
       return GLib.SOURCE_REMOVE;
     });
+  }
+
+  _refitAfterSubmenuTransition() {
+    this._queuePanelFit();
+    if (this._panelFitTimeoutId) GLib.source_remove(this._panelFitTimeoutId);
+    // PopupSubMenu animates its height for 250 ms. Refit once immediately and
+    // once after that transition so opening and closing both use the final size.
+    this._panelFitTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+      this._panelFitTimeoutId = 0;
+      this._queuePanelFit();
+      return GLib.SOURCE_REMOVE;
+    });
+  }
+
+  _fitPanelToWorkArea(allowDense, data) {
+    if (!this._panelButton || !this._panelCardsScroll || !this._panelCardsBox) return;
+
+    // Keep text and pointer coordinates at the native GNOME scale. Only the
+    // card region scrolls when a short monitor cannot contain the full menu.
+    this._panelCardsScroll.style = null;
+    this._panelCardsScroll.vscrollbar_policy = St.PolicyType.NEVER;
+    const availableHeight = Math.max(1, this._panelWorkArea().height - 16);
+    const [, naturalHeight] = this._panelButton.menu.box.get_preferred_height(-1);
+    if (allowDense && naturalHeight > availableHeight && this._panelMode === 'full') {
+      this._panelMode = 'dense';
+      this._renderPanel(this._lastData || data || { providers: [] });
+      return;
+    }
+
+    const [, cardsHeight] = this._panelCardsBox.get_preferred_height(-1);
+    const [, scrollHeight] = this._panelCardsScroll.get_preferred_height(-1);
+    const fixedHeight = Math.max(0, naturalHeight - scrollHeight);
+    const viewportHeight = Math.max(64, Math.floor(availableHeight - fixedHeight));
+    if (cardsHeight > viewportHeight) {
+      this._panelCardsScroll.style = `max-height: ${viewportHeight}px;`;
+      this._panelCardsScroll.vscrollbar_policy = St.PolicyType.AUTOMATIC;
+    }
   }
 
   _createPanelCard(provider, id) {

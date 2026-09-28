@@ -113,6 +113,13 @@
   border-radius: 12px;
   background-color: rgba(18, 37, 62, .96);
 }
+.aiwidgets-panel-cards-viewport {
+  margin: 0;
+  padding: 0;
+}
+.aiwidgets-panel-cards-scroll {
+  padding: 0;
+}
 .aiwidgets-panel-row {
   margin: 0;
   padding: 0;

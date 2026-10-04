@@ -24,6 +24,22 @@ test('parses Codex quotas from a fixture', async () => {
   });
 });
 
+test('parses the shared ChatGPT Usage view for Codex', () => {
+  const parsed = parseVisibleUsage('codex', [
+    '5-hour limit',
+    'Resets in 4h 43m',
+    '98% left',
+    'Weekly limit',
+    'Resets in 6d 23h',
+    '100% left',
+  ].join('\n'), 'default', NOW);
+  assert.deepEqual(parsed, {
+    session: { available: 98, resetLabel: 'Resets in 4h 43m' },
+    weekly: { available: 100, resetLabel: 'Resets in 6d 23h' },
+    note: 'Synced from Codex with AI Widgets.',
+  });
+});
+
 test('parses Copilot premium requests and Actions minutes fixtures', async () => {
   const premium = parseVisibleUsage('copilot', await fixture('copilot-premium.txt'), 'premium', NOW);
   assert.equal(premium.monthly.label, 'Premium requests');

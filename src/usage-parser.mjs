@@ -1,12 +1,12 @@
 const SESSION_LABELS = [
-  /\b5[-\s]*(?:h|hour(?:s)?)\s+usage\s+limit\b/ig,
+  /\b5[-\s]*(?:h|hour(?:s)?)\s+(?:usage\s+)?limit\b/ig,
   /\bcurrent\s+session\b/ig,
   /\bsession\s*\(\s*5\s*h(?:r)?\s*\)/ig,
 ];
 const WEEKLY_LABELS = [/\bweekly\s+(?:usage\s+)?limits?\b/ig, /\bweekly\s*\(\s*7\s*days?\s*\)/ig];
 const USAGE_VALUE = /(\d{1,3})\s*%\s*(available|left|remaining|consumed|used)\b/ig;
 const PROVIDER_NAMES = { claude: 'Claude', codex: 'Codex', copilot: 'GitHub Copilot' };
-const RESET_CONTEXT_BOUNDARY = /\s+(?:5[-\s]*(?:h|hour(?:s)?)\s+usage\s+limit|current\s+session|weekly\s+(?:usage\s+)?limits?|weekly\s*\(\s*7\s*days?\s*\)).*$/i;
+const RESET_CONTEXT_BOUNDARY = /\s+(?:5[-\s]*(?:h|hour(?:s)?)\s+(?:usage\s+)?limit|current\s+session|weekly\s+(?:usage\s+)?limits?|weekly\s*\(\s*7\s*days?\s*\)).*$/i;
 
 function closestPrecedingLabel(text, valueIndex, labels) {
   let closest = -1;

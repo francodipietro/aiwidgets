@@ -31,7 +31,9 @@ const CLI_REFRESH_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab]
 const COLLECTOR_PARTITION = 'persist:aiwidgets-subscriptions';
 const SESSION_DATA_TYPES = ['cache', 'cookies', 'fileSystems', 'indexedDB', 'localStorage', 'serviceWorkers', 'webSQL'];
 const PROVIDERS = {
-  codex: { name: 'Codex', startUrl: 'https://chatgpt.com/codex/settings/usage' },
+  // Codex allowances are now shown in ChatGPT's shared Usage settings rather
+  // than the former /codex/settings/usage route.
+  codex: { name: 'Codex', startUrl: 'https://chatgpt.com/#settings/usage' },
   claude: { name: 'Claude', startUrl: 'https://claude.ai/settings/usage' },
   copilot: {
     name: 'GitHub Copilot',
@@ -893,6 +895,9 @@ function sourceUrl(providerId, source, entry) {
     // Older connections saved the Billing overview. Its Copilot section only
     // contains spend, whereas the analytics view exposes the included quota.
     if (providerId === 'copilot' && source === 'premium' && saved.pathname === '/settings/billing') return sourceStartUrl(providerId, source);
+    // Existing Codex connections retain a dedicated Codex URL. Do not keep
+    // refreshing that retired route after upgrading the app.
+    if (providerId === 'codex' && !saved.hash.startsWith('#settings/usage') && !saved.pathname.startsWith('/settings/usage')) return sourceStartUrl(providerId, source);
   } catch { return sourceStartUrl(providerId, source); }
   return entry.url;
 }
@@ -995,6 +1000,8 @@ function isCanonicalUsageUrl(providerId, value) {
   try {
     const url = new URL(value);
     if (providerId === 'codex') return url.hostname === 'chatgpt.com' && (
+      url.hash.startsWith('#settings/usage') ||
+      url.pathname.startsWith('/settings/usage') ||
       url.pathname.startsWith('/codex/settings/usage') ||
       url.pathname.startsWith('/codex/cloud/settings/analytics')
     );
@@ -1155,7 +1162,7 @@ function createProviderWindow(providerId, show, source = 'default') {
 async function extractUsageText(webContents) {
   return webContents.executeJavaScript(`(() => {
     const lines = (document.body?.innerText || '').split('\\n').map((line) => line.trim()).filter(Boolean);
-    const relevant = /\\b(?:\\d{1,3}\\s*%|current\\s+session|weekly\\s+(?:usage\\s+)?limits?|5[-\\s]*(?:h|hour(?:s)?)\\s+usage\\s+limit|AI\\s+credits?|Actions\\s+minutes|included\\s+usage|billable\\s+usage|available|remaining|consumed|used|reset)\\b/i;
+    const relevant = /\\b(?:\\d{1,3}\\s*%|current\\s+session|weekly\\s+(?:usage\\s+)?limits?|5[-\\s]*(?:h|hour(?:s)?)\\s+(?:usage\\s+)?limit|AI\\s+credits?|Actions\\s+minutes|included\\s+usage|billable\\s+usage|available|left|remaining|consumed|used|reset)\\b/i;
     const kept = new Set();
     lines.forEach((line, index) => { if (relevant.test(line)) for (let offset = -3; offset <= 6; offset += 1) if (lines[index + offset]) kept.add(index + offset); });
     return [...kept].sort((a, b) => a - b).map((index) => lines[index]).join('\\n').slice(0, 20000);
